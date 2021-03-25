@@ -1,0 +1,1474 @@
+---
+title: "Gas turbine NO~x~ emission prediction"
+subtitle: "Mathematics in Machine Learning"
+author: "Nicolini Alessandro"
+output: 
+  bookdown::html_document2:
+    fig_caption: true
+    theme: yeti
+    highlight: pygments
+    code_folding: hide      # hide code by default
+    df_print: paged
+    toc: true               # table of contents
+    number_sections: true   
+    toc_depth: 3
+    toc_float: false         # floating toc
+bibliography: bibliography.bibtex
+link-citations: true
+header-includes:
+  - \usepackage{bm}
+---
+
+# Introduction
+## Work context
+The increasing demand for energy had a major negative impact on the environment through increasing air pollutant emissions. The term *air pollutant* covers all substances which may harm living beings. @Skalska points out the two main air pollutants sources: combustion processes of fossils fuels used 
+in power plants and vehicles. Among the combustion-generated air contaminants there are the nitrogen oxides (NO~x~), considered the primary pollutants of the 
+atmosphere, since they are responsible both for environmental problems like photochemical smog, acid rain, tropospheric ozone, ozone layer depletion and even global warming, and for many health problems in humans exposed to high concentrations of these gases. The abbreviation NO~x~ usually relates to
+nitrogen monoxide NO and nitrogen dioxide NO~2~. Thanks to the increased environmental awareness both in public opinion and political circles, there is 
+a special concern in reducing the emissions from power plants. In order to tackle the problem these emissions are limited by restrictive environmental rules
+adopted in different parts of the world, such as the directives adopted in Europe which limit the emissions to 25 ppmmdv (parts per million by dry volume). Monitoring the emissions during the combustion operations in a power plant, becomes a crucial operation. Three are the main adopted monitoring strategies:
+
+* **periodic measurements**: performed with calibrated equipment by testing laboratories;
+
+* **continuous emission monitoring system (CEMS)**: through proper calibrated sensors it provides real-time information on emissions (sensors must be subjected to periodic maintenance according standard procedures);
+
+* **predictive emission monitoring system (PEMS)**: predictive models which take in input some process variables, and, trained on past data, estimate the emission components. 
+
+Despite the fact PEMS is not yet regulated by law, yet it is a useful validation method for CEMS outputs: it could be used to estimate the periods of CEMS maintenance and can serve as backup of CEMS during failure/maintenance.
+
+## Work summary
+The aim of the work is to create a PEMS, which essentially carries out a *regression task*: the estimation of the relation that exists between a response variable and one or more independent explanatory variables. After a brief introduction of the [work environment](#dev-environment), there is a description of the [dataset](#dataset-description) and the exploratory data analysis in order to better understand the data. A definition of the [evaluation metrics](#evaluation-metrics) used in order to access the model performance follow the previous part, then we can start with the project core. At first, the [linear regression analysis](#general-linear-models) is explained step by step from a statistical point of view, and a linear regression model is eventually made trying to fit the available data. After its limits have been investigated, a widely used decision-rule based regression algorithm, namely  [Random Forest](#random-forest-regressor), is tested to try to overcome the linear model limits. Finally the actual performances of the two model are compared on previous unseen data.
+
+# Dev environment
+The project is an R notebook completely developed in R, a language for statistical computing, through the RStudio IDE, which exploiting [R markdown](https://rmd4sci.njtierney.com/) lets you create professional and well organized data science project reports. In a R notebook code chunks are interspersed by markdown chunks where you can explain each analysis phase, and both plots and tables can be visualized to clearly communicate the results. The R notebook is then knit to create a pdf or a html document. The set of loaded libraries provide useful functions, it is worth mentioning [KableExtra](https://cran.r-project.org/web/packages/kableExtra/vignettes/awesome_table_in_html.html) used to create awesome html table, [ggplot](https://ggplot2.tidyverse.org/index.html) and [plotly](https://plotly.com/r/), used to create plots, and the novel machine learning library [mlr3](https://mlr3book.mlr-org.com/) concerning the Random Forest.
+
+```{r results='hide', message=FALSE, warning=FALSE}
+# SOME USEFUL LIBRARIES=========================================================
+
+library(magrittr) # pipe 
+library(forestmangr) # to round values in a df
+library(car) # vif variance inflaction factor
+library(e1071) # skewness function 
+library(data.table)
+
+# TABLES AND PLOTS==============================================================
+
+library(tidyverse)
+library(kableExtra) # custom tables
+library(ggpubr) # ggrrange
+library(plotly)  # 3d plot
+library(ggcorrplot) # correlation heatmap
+
+# RANDOM FOREST=================================================================
+
+library(mlr3)
+library(mlr3viz)
+library(mlr3learners)
+library(paradox)
+library(mlr3tuning)
+```
+
+# Dataset
+## Description
+```{r attributesTab} 
+# DATA LOADING==================================================================
+
+path <- "/home/alessandro/Documents/DataScienceEng/1_2/Mathematics_in_Machine_learning/NOxEmissionData/pp_gas_emission/"
+
+# dataframe initilization
+emissions_raw <- data.frame()
+
+for (year in 2011:2015){
+  # create the complete file path
+  file_path <- paste(path, "gt_", year, ".csv", sep = "")
+  # retrieve current year data
+  year_data <- read.csv(file_path, header = TRUE)
+  # add 'year' attribute
+  year_data$year <- rep(year, length(year_data[, 1]))
+  emissions_raw <- rbind(emissions_raw, year_data)
+}
+
+# drop CO column
+emissions <- emissions_raw %>% select(-CO)
+
+# convert year in a factor
+emissions$year <- as.factor(emissions$year)
+
+# shuffle the dataset
+set.seed(42)
+n <- nrow(emissions)
+rows <- sample(n)
+emissions <- emissions[rows, ]
+row.names(emissions) <- NULL
+
+# check for na values-----------------------------------------------------------
+
+num_na <- sum(is.na(emissions))
+
+# train validation and test sets------------------------------------------------
+
+# test indexes
+test <- sample(1:n, round(0.25*n))
+remaining <- setdiff(1:n, test)
+
+# validation indexes
+val <- sample(remaining,  round(0.25*n))
+
+# training indexes
+train <- setdiff(remaining, val)
+
+# ATTRIBUTES TABLE==============================================================
+
+# table creation----------------------------------------------------------------
+
+attributes_df <- data.frame(
+  Attribute = c(
+    "Ambient temperature",
+    "Ambient pressure",
+    "Ambient humidity",
+    "Air filter difference pressure",
+    "Gas turbine exhaust pressure",
+    "Turbine inlet temperature",
+    "Turbine after temperature",
+    "Turbine energy yield",
+    "Compressor discharge pressure",
+    "Nitrogen oxides",
+    "Data collection year"
+  ),
+  Abbr = colnames(emissions),
+  Unit = c(
+    "$°C$",
+    "mbar",
+    "(%)",
+    "mbar",
+    "mbar",
+    "$°C$",
+    "$°C$",
+    "MWH",
+    "mbar",
+    "$mg/m^3$",
+    "none"
+  ),
+   min = apply(emissions[c(train, val), -11], 2, min) %>% round(digits = 2) %>% append(values="2011"),
+   max = apply(emissions[c(train, val), -11], 2, max) %>% round(digits = 2) %>% append(values="2015")
+)
+
+rownames(attributes_df) <- NULL
+
+# table visualization-----------------------------------------------------------
+
+attributes_df %>%
+  kbl(caption = "Dataset attributes", booktabs = TRUE) %>%
+  kable_styling(full_width = F, position = "float_right")
+```
+
+
+The dataset was retrieved from UCI Machine Learning Repository at this [link](https://archive.ics.uci.edu/ml/datasets/Gas+Turbine+CO+and+NOx+Emission+Data+Set). It contains data concerning a gas turbine located in Turkey's north western region for the purpose of studying flue gas emissions, namely CO and NO~x~ (NO + NO~2~). The dataset has `r n` instances of 11 sensor measures aggregated over one hour, collected over a five years period, from 01/01/2011 to 31/12/2015, and sorted by chronological order. The dataset does not contain any missing value. For work-organization and clarity sake only the NO~x~ response variable is studied, while CO is dropped from the dataset. There is no time reference among the available attributes, the *year* attribute has been added only to show how the distribution of the response variable slightly changes over the years, it is not used during the analysis. Due to this fact the dataset splitting approach adopted by @KAYA (2011-2012 train, 2013 validation and 2014-2015 test) was abandoned in favor of a shuffling strategy and a subsequent partition using 50% as train, 25% as validation, and the remaining 25% as test. The test set has been created and used only for the test purpose during the analysis, to avoid any possible insight about its characteristics. Table \@ref(tab:attributesTab) summarizes the attribute names and ranges, while their meaning is clarified in the next section. A dataset visualization follow below.
+
+```{r rows.print = 7}
+emissions
+```
+
+## Turbine working principle
+
+```{r turbineFig, fig.align = 'center', out.width = "90%", fig.cap = "Gas turbine main components and measurement positions."}
+knitr::include_graphics(here::here("gas_turbine.png"))
+```
+
+The gas turbine in figure \@ref(fig:turbineFig) is the prime mover for an electricity generator. It is able to transform the chemical energy in the fuel (natural gas or similar fuel), into mechanical energy, which is transferred from the turbine exit shaft to the generator's shaft through a gearbox. Air is let into the turbine through the *air intake*, going across the *compressor*. This component is essential to guarantee a self-sustaining combustion process. At first an initial momentum is imparted to the turbine rotor from an external motor, until the compressor reaches a certain speed. The air is incrementally compressed as it passes through each compressor stage, increasing both its pressure and temperature and then reaches the *combustion chamber*, where it is mixed with a proper amount of natural gas. The Air/Gas ratio depends on a series of factors: air quality, heating value of the gas, humidity and so on. An ignition system steps in providing heat, and will be put out of service as soon as the fire is established and stabilized in the combustion chamber. The high pressure exhaust gas produced in the combustion chamber is applied to the *turbine blades* inducing the rotation of the turbine shaft, and then is conducted to the *exhaust stack*. The rotation of the shaft drives the compressor to draw in and compress more air to sustain continuous combustion.
+
+## Exploratory Data Analisys (EDA)
+
+### Histogram of the output variable
+
+The data has been already split into train, val and test and EDA is performed only to the train an val part merged together. The data exploratory phase starts with a look at the output variable density histogram in figure \@ref(fig:responseDistrFig). The *histogram* is  an  *approximate representation*  of the real NO~x~ distribution, it gives a rough sense of the density of the underlying distribution of the NO~x~ data. The range of the values that NO~x~ can take is divided into intervals of equals width. The height of each bar equals the *empirical density* associated to the corresponding interval, and it is defined as the *empirical probability* divided by the interval width, where the probability is computed as the number of sample observations within the interval divided by the total number of observations. 
+
+
+It appears to be positively skewed and the skewness amount is measured through the [Pearson's moment coefficient of skewness](https://en.wikipedia.org/wiki/Skewness), which is the *third stardardized moment* $\tilde\mu_3$ defined as:
+
+\begin{equation}
+
+\tilde\mu_3 = E\Bigg[\bigg(\frac{X-\mu}{\sigma}\bigg)^3\Bigg] = \frac{\mu_3}{\sigma^3} = \frac{E\big[(X-\mu)^3\big]}{\Big(E\big[(X-\mu)^2\big]\Big)^{3/2}}
+
+(\#eq:skw)
+\end{equation}
+
+For a sample of n values, a natural [methods of moments](https://en.wikipedia.org/wiki/Method_of_moments_(statistics)) estimator of the population skewness is:
+
+\begin{equation}
+
+b_1 = \frac{m_3}{s^3} = \frac{\frac{1}{n}\sum_{i=1}^{n}(x_i-\overline{x})^3}{\Big[\frac{1}{n-1}\sum_{i=1}^{n}(x_i-\overline{x})^2\Big]^{3/2}}
+
+(\#eq:sampleSkw)
+\end{equation}
+
+```{r responseDistrFig, fig.align="center",fig.width = 8, fig.height = 6, message = FALSE, warning = FALSE, fig.cap = "NO~x~ and log(NO~x~) approximate distributions and relative skewness measures."}
+# SKEWNESS MEASURE ============================================================
+
+skew <- emissions[-test, ]$NOX %>% skewness()
+skew_log <- emissions[-test, ]$NOX %>% log() %>% skewness()
+
+skew_label <- paste("skw", round(skew, digits = 2) %>% as.character(), sep = ": ")
+skew_log_lab <- paste("skw", round(skew_log, digits = 2) %>% as.character(), sep = ": ")
+
+# RESPONSE VARIABLE PLOTS ======================================================
+
+# histogram --------------------------------------------------------------------
+
+# Nox
+hist <- ggplot() +
+  geom_histogram(data = emissions[-test, ], aes(x = NOX, y = ..density..), fill="#3b3b9c", alpha = 0.9) +
+  geom_text(aes(x = 100, y = 0.025, label = skew_label))+
+  xlab("NOx")+
+  ylab("emp. density")+
+  ggtitle("original response variable")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+# log(NOx) 
+hist_log <- ggplot() +
+  geom_histogram(data = emissions[-test, ], aes(x = log(NOX), y = ..density..), fill="#3b3b9c", alpha = 0.9)+
+  geom_text(aes(x = 3.5, y = 1.5, label = skew_log_lab))+
+  xlab("log(NOx)")+
+  ylab("emp. density")+
+  ggtitle("new response variable")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+# qq plot ----------------------------------------------------------------------
+
+# Nox
+qq <- ggplot(data = emissions[-test, ], aes(sample = NOX))+
+  geom_qq(alpha = 0.5, size = 0.8)+
+  stat_qq_line(color = "red", alpha = 0.7, size = 0.5, linetype = 2)
+
+# log(Nox)
+qq_log <- ggplot(data = emissions[-test, ], aes(sample = log(NOX)))+
+  geom_qq(alpha = 0.5, size = 0.8)+
+  stat_qq_line(color = "red", alpha = 0.7, size = 0.5, linetype = 2)
+
+# combine graphs ---------------------------------------------------------------
+ggarrange(hist, hist_log, qq, qq_log, ncol = 2, nrow = 2, align = "h")
+```
+
+In order to reduce the skweness value obtaining a more gaussian-shaped approximate distribution to perform the subsequent linear regression, a *log transformation* is applied to the target variable, becoming the new response variable of the analysis. A *qq-plot* helps in assessing the normality assumption, which is not completely fulfilled despite the applied transformation, however the skeweness measure decreased from `r round(skew, digits=2)` to `r round(skew_log, digits=2)`.\
+In order to motivate the shuffling choice instead of creating splits according the years, figure \@ref(fig:noxYearlyDistrFig) shows how the approximate yearly NO~x~ distribution changes depending on the year. Generally speaking for a good model performance assessment the data used to validate and then to test the model should be drawn from the same distribution the training data was drawn from, assuming they have similar shapes, otherwise the whole procedure lose its meaning.
+
+```{r noxYearlyDistrFig, fig.align="center",fig.width = 8, fig.height = 2, message = FALSE, warning = FALSE, fig.cap = "approximate yearly NO~x~ distribution."}
+# YEARLY NOx HISTOGRAMS ========================================================
+ggplot() + 
+  geom_histogram(data = emissions[-test, ], aes(x = log(NOX), y=..density..), fill="#3b3b9c", alpha = 0.9)+
+  facet_wrap(~year, nrow = 1, ncol = 5)+
+  xlab("log(NOx)")+
+  ylab("emp. density")
+```
+
+### Pearson's correlation coefficient and Correlation Heatmap
+
+To assess the existence of collinearity among the features [Pearson's correlation coefficient](https://en.wikipedia.org/wiki/Pearson_correlation_coefficient) can be computed. It is also known as *bivariate correlation* and its statistical meaning is measuring the *linear correlation* between two random variables X and Y. It lies within a range of -1 to +1 where +1 means total positive linear correlation, -1 means total negative linear correlation and 0 means no linear correlation. The coefficient is defined as follow:
+
+\begin{equation} 
+
+\rho_{X,Y}=\frac{Cov(X,Y)}{\sigma_X\sigma_Y}=\frac{E\big[(X-\mu_X)(Y-\mu_Y)\big]}{\sqrt{E\big[(Y-\mu_Y)^2\big]}\sqrt{E\big[(X-\mu_X)^2\big]}}
+
+(\#eq:corr)
+\end{equation}
+
+where $Cov$ is the covariance, $\sigma_X$ is the standard deviation of $X$, and $\mu_X$ is the mean of $X$ (analogously for $\sigma_Y$ and $\mu_Y$). While having a sample $\{x_i, y_i\}_{i=1}^n$ it can be estimated as:
+
+\begin{equation} 
+
+r_{x,y}=\frac{\sum_{i=1}^{n}{(x_i-\overline{x})(y_i-\overline{y})}}{\sqrt{\sum_{i=1}^{n}{(x_i-\overline{x})^2}}\sqrt{\sum_{i=1}^{n}{(y_i-\overline{y})^2}}}
+
+(\#eq:sampleCorr)
+\end{equation}
+
+where $n$ is the sample size, $x_i$ is the *i*-th sample element and $\overline{x}=\frac{1}{n}\sum_{i=1}^{n}{x_i}$ is the sample mean (analogously for $y_i$ and $\overline{y}$).\
+Identifying closely related predictor variables is an important step in a regression context, in fact problems could arise since it is difficult to separate out the individual effect of this kind of variables on the response. The easiest solution adopted in this work is to eliminate one of the highly correlated features. Two are the main limits of the Pearson's correlation coefficient:
+
+1 it is bivariate, still it could also happen that a high linear correlation exists between a predictor and some of the others, namely multi-collinearity 
+
+2 it only assess for linear relationship, but it could not be the case
+
+the first of these two problems is later tackled taking into account the *Variance Inflation Factor* (VIF).
+
+```{r corrFig, fig.align="center", fig.cap = "bivariate correlation computed among features."}
+# CORRELATION HEATMAP ==========================================================
+
+year_col = 11
+nox_col = 10
+emissions$log_nox <- emissions$NOX %>% log()
+corr <- cor(emissions[-test, -c(year_col, nox_col)], emissions[-test, -c(year_col, nox_col)])
+ggcorrplot(corr, hc.order = TRUE, type = "lower", lab = TRUE)+
+  ggtitle("correlation heatmap")+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Looking at the correlation heatmap of figure \@ref(fig:corrFig) there exist some highly linearly correlated input variables, also notice how the higher correlations occur between the turbine measure variables. The highest level of dependence exist between Compressor Discharge Pressure (CDP) and Turbine Energy Yield (TEY) (0.99), between Compressor Discharge Pressure (CDP) and Gas Turbine Exhaust Pressure (GTEP) (0.98) and also between Gas Turbine Exhaust Pressure (GTEP) and Turbine Energy Yield (TEY) (0.96). This means that some of the features may contain redundant information, and thus can be eliminated during the model training. Also notice the quite high correlation between the response variable log(NO~x~) and the ambient temperature (AT) (-0.56): the negative sign means that the response variable tend to decrease on average when the ambient temperature increases.
+
+# Linear regression
+
+## General linear model (GLM)
+
+The first analyzed model is the linear regression, which falls under the *General Linear Model* (GLM) broader framework. Some theoretical concepts concerning GLM will be now introduced. Let's start saying that the main idea is to use a set of *predictors*  collected in a matrix $X$ in order to explain the probabilistic behavior of a set of quantitative *responses* $y_1,\dots,y_n$ which are considered as realization of normal distributed random variables $Y_1,\dots,Y_n$. What we want to find is the best linear approximation of the true unknown relationship between $\boldsymbol{Y}$ and $\boldsymbol{X}$, in other words:
+
+\begin{equation}
+
+\boldsymbol{Y} = \boldsymbol{X\beta}+\boldsymbol{\epsilon}
+
+(\#eq:glm)
+\end{equation}
+
+more explicitly:
+
+\begin{equation}
+
+\begin{bmatrix} 
+Y_1\\ 
+Y_2\\
+\vdots\\ 
+Y_n 
+\end{bmatrix}  = 
+
+\begin{bmatrix}
+x_{11}&x_{12}&\cdots&x_{1p}\\
+x_{21}&x_{22}&\cdots&x_{1p}\\
+\vdots&\vdots&\ddots&\vdots\\
+x_{n1}&x_{n2}&\cdots&x_{np}
+\end{bmatrix}
+
+\begin{bmatrix}
+\beta_0\\
+\beta_1\\
+\vdots\\
+\beta_{p-1}
+\end{bmatrix} +
+
+\begin{bmatrix}
+\epsilon_1\\
+\epsilon_2\\
+\vdots\\
+\epsilon_n
+\end{bmatrix}
+
+(\#eq:glmExplicit)
+\end{equation}
+
+where:
+
+- $\boldsymbol{Y}$ is the $n \times 1$ *response vector* 
+
+- $\boldsymbol{X}$ is $n\times p$ matrix containing the values of $p-1$ predictors because the first column is usually a column of $1$'s. They are not random but can be considered as values under the control of the experimenter
+
+- $\boldsymbol{\beta}$ is the $p \times 1$ vector of unknown parameters object of the statistical inference
+
+- $\boldsymbol{\epsilon}$ is a $n\times1$ vector of *unobservable* random variables which take into account the error due to different sources of uncertainty (simplicity of the model, measurement errors, natural variability, ...). 
+
+The random error vector is modeled as white noise added to the signal $\boldsymbol{X\beta}$, thus having a multivariate normal distribution:
+
+\begin{equation}
+
+\boldsymbol{\epsilon} \sim \mathcal{N}_n\big(\boldsymbol{0}_{n \times 1},\; \sigma^2\boldsymbol{I}_{n \times n}\big)
+
+(\#eq:errorDistr)
+\end{equation}
+
+meaning the error terms are independent and identically distributed (i.i.d.) random variables. 
+The fact implies that $Y_1, \dots, Y_n$ are normal independent distributed, but not identically because they have different means:
+
+\begin{equation}
+
+\boldsymbol{Y} \sim \mathcal{N}_n\big(\boldsymbol{X\beta},\; \sigma^2\boldsymbol{I}_{n \times n}\big)
+
+(\#eq:responseDistr)
+\end{equation}
+
+\begin{equation}
+
+\begin{aligned}
+
+E(Y_i) = \boldsymbol{X}_{i*}\boldsymbol{\beta}\\
+Var(Y_i) = \sigma^2
+
+\end{aligned}
+
+(\#eq:responseMeanVar)
+\end{equation}
+
+where $\boldsymbol{X}_{i*}$ is the $i$-th row of $\boldsymbol{X}$.
+
+
+
+
+
+## Least squares coefficient estimates
+
+A solution for our problem is found through the *Maximum likelihood* estimation method, which lead us to the *least squares criterion*: we are searching for a set of $\boldsymbol{\beta}$ values which maximize the probability "to see what we saw" (the observed $\mathbf{y}$). We need to solve a maximization problem involving the likelihood function:
+
+\begin{equation}
+
+\mathcal{L}\big(\boldsymbol{\beta}|\boldsymbol{Y}=\boldsymbol{y}\big)\propto exp\big(-||\boldsymbol{y}-\boldsymbol{\mu}||^2\big).
+
+(\#eq:likelihood)
+\end{equation}
+
+The starting maximization problem can be rewritten as a least squares minimization problem:
+
+\begin{equation}
+
+\min_\boldsymbol{\beta}\;||\boldsymbol{y}-\boldsymbol{\mu}||^2=\min_\boldsymbol{\beta}\;||\boldsymbol{y}-\boldsymbol{X\beta}||^2
+
+(\#eq:minimization)
+\end{equation}
+
+letting us find the following estimator if $\boldsymbol{\big(X^\top X\big)}$ is invertible:
+
+\begin{equation}
+
+\hat{\boldsymbol{\beta}} = \big(\boldsymbol{X}^\top\boldsymbol{X}\big)^{-1}\boldsymbol{X}^\top \boldsymbol{Y}.
+
+(\#eq:betaEstimator)
+\end{equation}
+
+Being a linear transformation of $\mathbf{Y}$ also $\hat{\boldsymbol{\beta}}$ has a multivariate normal distribution:
+
+\begin{equation}
+
+\hat{\boldsymbol{\beta}} \sim \mathcal{N}_p\Big(\boldsymbol{\beta}, \; \sigma^2\big(\boldsymbol{X}^\top\boldsymbol{X}\big)^{-1}\Big)
+
+(\#eq:betaDistr)
+\end{equation}
+
+meaning it is an *unbiased* estimator, that is if we had to recompute $\hat{\boldsymbol{\beta}}$ with different $\mathbf{y}$ samples, on average the it does not tend to neither overestimate nor underestimate $\boldsymbol{\beta}$ (unknown to us).
+Finally given the previous estimator and $\boldsymbol{Y} = \boldsymbol{y}$ we can find the *least squares coefficient estimates* $\hat{\beta}$'s related to our problem, which enable us to make predictions. Let $\boldsymbol{x}=\begin{bmatrix} x_1 & \cdots & x_p \end{bmatrix}^\top$ be a new set of predictor values, then:
+
+\begin{equation}
+
+\hat{y} = \boldsymbol{x}^\top\hat{\boldsymbol{\beta}}.
+
+(\#eq:prediction)
+\end{equation}
+
+
+
+
+
+## Variance estimate
+
+First of all we need to introduce the vector of *residuals* defined as:
+
+\begin{equation}
+
+\boldsymbol{e} = \boldsymbol{Y}-\boldsymbol{X}\hat{\boldsymbol{\beta}}.
+
+(\#eq:residual)
+\end{equation}
+
+The residuals are the sampling, therefor measurable,  counterpart of errors.
+Then we can find a maximum likelihood estimator for the variance $\sigma^2$ of each error, which is an average of squared residuals:
+
+\begin{equation}
+
+\tilde{\sigma}^2 = \frac{||\boldsymbol{Y}-\boldsymbol{X}\hat{\boldsymbol{\beta}}||^2}{n}.
+
+(\#eq:sigmaMle)
+\end{equation}
+
+Sometimes the unbiased version, known as *residual standard error* (RSE), is preferable:
+
+\begin{equation}
+
+\hat{\sigma}^2 = \frac{\boldsymbol{e}^\top\boldsymbol{e}}{n-p} = \frac{n}{n-p}\tilde{\sigma}^2
+
+(\#eq:rse)
+\end{equation}
+
+
+
+
+
+## Null model
+
+Before introducing the evaluation metrics is worth mentioning the so called *null model*, a model which arises when $p=1$:
+
+\begin{equation}
+
+\boldsymbol{Y} = \beta_0 \boldsymbol{1} + \boldsymbol{\epsilon}
+
+(\#eq:nullmodel)
+\end{equation}
+
+It means that $Y_i \sim \mathcal{N}(\beta_0, \; \sigma^2)\; \forall i = 1,\dots,n$, and the $\beta$ estimator corresponds to the MLE of the mean:
+
+\begin{equation}
+
+\hat{\beta} =\overline{\boldsymbol{Y}}.
+
+(\#eq:beta0)
+\end{equation}
+
+where $\hat{\beta}$ has a single component, $\hat{\beta_0}$.
+
+
+
+
+
+## Evaluation metrics
+
+The following metrics are used in assessing the model goodness.
+The first one is the *Mean Absolute Error* (MAE) which is computed as:
+
+\begin{equation}
+
+MAE = \frac{|\boldsymbol{e}|\boldsymbol{1}}{n} = \frac{\sum_{i=1}^{n}{|Y_i - \hat{Y_i}|}}{n}
+
+(\#eq:mae)
+\end{equation}
+
+where $\boldsymbol{e}$ is the vector of residual defined by \@ref(eq:residual).
+
+```{r}
+# MAE ==========================================================================
+
+mae <- function(actual, predicted){
+  mae <- mean(abs(actual-predicted)) 
+  return(mae)
+}
+```
+
+The second metric is the so called *Root Mean Square Error* computed by:
+
+\begin{equation}
+
+RMSE= \sqrt{\frac{||\boldsymbol{e}||^2}{n}} = \sqrt\frac{\sum_{i=1}^{n}{(Y_i - \hat{Y_i})^2}}{n}
+
+(\#eq:rmse)
+\end{equation}
+
+which is the *biased* estimator of $\sigma$ \@ref(eq:sigmaMle), the standard deviation of the error terms. The RMSE is more sensible to high residuals than MAE.
+
+```{r}
+# RMSE =========================================================================
+
+mse <- function(actual, predicted){
+  mse <- (actual-predicted)^2 %>% mean()
+  return(mse)
+}
+
+rmse <- function(actual, predicted){
+  rmse <- mse(predicted, actual) %>% sqrt()
+  return(rmse)
+}
+```
+
+The last metric is the *coefficient of determination* $R^2$ computed as:
+
+\begin{equation}
+
+R^2 = \frac{||\boldsymbol{e}_0||^2-||\boldsymbol{e}||^2}{||\boldsymbol{e}_0||^2}=\frac{||\hat{\boldsymbol{Y}}-\hat{\boldsymbol{Y}}_0||^2}{||\boldsymbol{e}_0||^2}=\frac{\sum_{i=1}^{n}{(\hat{Y_i}-\overline{Y})}}{\sum_{i=1}^{n}{(Y_i-\overline{Y})}}
+
+(\#eq:rSquared)
+\end{equation}
+
+where:
+
+- $\hat{\boldsymbol{Y}}_0 = \overline{Y}\boldsymbol{1}$ is the prediction made by the Null model
+
+- $||\boldsymbol{e}_0||^2$ is called *total sum of squares* $SS_{tot}$ and it is the residuals vector computed when data are fit by the Null Model, it represents the amount of variability inherent in the response before the regression is performed
+
+- $||\boldsymbol{e}||^2$ is called *residual sum of squares* $SS_{reg}$ and represents the amount of variability inherent in the response that is left unexplained after performing the regression
+
+- $||\hat{\boldsymbol{Y}}-\hat{\boldsymbol{Y}}_0||^2 = SS_{tot}-SS_{reg}$ is the amount of variability inherent in the response that is explained performing the regression.
+
+The coefficient $R^2$ in turn represents the proportion of variability inherent the response that the performed regression explains. The metrics are computed given that $\boldsymbol{Y} = \boldsymbol{y}$, therefor the random variables become actual observations. The drawback of this metric is that it always increases when other predictors are added to the model, do not taking into account the price paid in having a higher complexity. In performing multiple linear regression a more reliable metric is the so called *adjusted* $R^2$ defined as:
+
+\begin{equation}
+
+R^2_{adj} = 1-(1-R^2)\frac{n-1}{n-p}
+
+(\#eq:adjR)
+\end{equation}
+
+where accordingly our formulation, $p$ is the total number of parameters, intercept included. Due to the fact we have an high number of data recorded and a low number of predictors, the factor $(n-1)/(n-p)$ is surely near 1, so in multiple linear regression models created in next sections the $R^2$ suffices.
+```{r}
+# R SQUARED ====================================================================
+
+# R squared
+Rsquared <- function(actual, predicted){
+  SSreg <- (predicted-mean(actual))^2 %>% sum()
+  SStot <- (actual-mean(actual))^2 %>% sum()
+  rsquared <- SSreg/SStot
+  return(rsquared)
+}
+```
+
+In the next sections linear regression will be applied to our problem, adopting a step by step approach with toy models, starting from simple linear regression, then trying multiple linear regression with introduction of interaction terms, to conclude with the definition of two bigger models, before the last models selection phase.
+Pay attention that in dealing with the following linear regression models for sake of simplicity I preferred merge the starting train and validation set, exploiting this merged set to train the toy models and then to carry out cross validation during model selection. This choice is due to the fact that overfitting phenomena is not likely to happen in carrying out linear regression, in fact a linear relationship is the simplest plausible relationship that response link and predictors.
+
+
+
+
+
+## Simple linear regression
+
+The first and simplest among the tried models during the analysis is a *simple linear regression* model which consider $log(NO_x)$ as response variable and *Ambient Temperature* (AT) as predictor, namely:
+
+\begin{equation}
+
+log(NO_x) \approx \beta_0 + \beta_1\times AT.
+
+(\#eq:simpleLinReg)
+\end{equation}
+
+It is known as *population regression line* and is the best linear approximation to the true relationship between $AT$ and $log(NO_x)$.
+Applying the $\boldsymbol{\beta}$ estimator \@ref(eq:betaEstimator) we find the *least squares line*, also shown in figure \@ref(fig:leastSquaresLine):
+
+\begin{equation}
+
+\hat{y} = \hat{\beta}_0+\hat{\beta}_1 x_1
+
+(\#eq:leastSquaresLine)
+\end{equation}
+
+with $\hat{y}$ prediction on the basis of $AT = x$. 
+
+```{r leastSquaresLine, fig.align="center", message=FALSE, warning=FALSE, fig.width=5.5 ,fig.height=4, fig.cap = "*simple_lm* regression model."}
+# SIPLE LINEAR REGRESSION MODEL ================================================
+
+# model ------------------------------------------------------------------------
+simple_lm <- lm(log_nox ~ AT, data = emissions, subset = -test)
+
+# plot -------------------------------------------------------------------------
+ggplot(data = emissions[-test, ], aes(x = AT, y = log_nox))+
+  geom_point(alpha = 0.5, color = "#121214", size = 1) +
+  geom_smooth(method = "lm", se=FALSE, color = "#3b3b9c", size = 0.8)+
+  ylab("log(NOx)") +
+  xlab("Ambient Temperature") +
+  ggtitle("least squares line")+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Through the *summary* R command is possible to have detailed information about the model, in this regard is worth mentioning the statistical information related to coefficient estimates. Remember that according \@(eq:betaDistr) each parameter has a univariate normal distribution:
+
+\begin{equation}
+
+\hat{\beta}_i \sim \mathcal{N}\Big(\beta_i, \; \sigma^2\big(\boldsymbol{X}^\top \boldsymbol{X}\big)_{i+1, \, i+1}\Big)
+
+(\#eq:singleParamDistr)
+\end{equation}
+
+where $E\big[\hat{\beta}_i\big] = \beta_i$ and $Var\big(\hat{\beta}_i\big)=\sigma^2\big(\boldsymbol{X}^\top \boldsymbol{X}\big)_{i+1, i+1}$. From this we can easily obtain that:
+
+\begin{equation}
+
+\frac{\hat{\beta}_i - \beta_i}{\sqrt{\hat{\sigma}^2\big(\boldsymbol{X}^\top \boldsymbol{X}\big)_{i+1,\,i+1}}} \sim \mathcal{t}(n-p)
+
+(\#eq:betaTdistr)
+\end{equation}
+
+which allows us to construct confidence intervals and hypothesis tests for a single $\beta_i$.
+$\hat{\sigma}^2$ is the unbiased estimator of $\sigma^2$ already introduced by \@ref(eq:rse) (RSE).
+
+```{r}
+# SIMPLE REGRTESSION MODEL SUMMARY =============================================
+summary(simple_lm)
+```
+In the model summary two main parts can be distinguished: the first one summarizes some statistics about the residuals, which should be centered in zero and distributed symmetrically around it. the second part gives useful information about coefficients:
+
+- **Estimates**: are the estimated values for *intercept* $\hat{\beta}_0$ and the *slope* $\hat{\beta}_1$, 
+
+- **Std. Error**: is the *estimated standard error* $SE(\hat{\beta}_i) = \sqrt{\hat{\sigma}^2\big(\boldsymbol{X}^\top \boldsymbol{X}\big)_{i+1, \,i+1}}$ for each coefficient, 
+
+- **t value**: the value $\hat{\beta}_i/SE\big(\hat{\beta}_i\big)$ which measures how many estimated standard errors the estimate is far from zero, we want it to be as far as possible that is the relative predictor is actually relevant, 
+
+- **Pr(>|t|)**: is the *p-value* of the hypothesis test $\mathcal{H_0} : \beta_i = 0$ vs $\mathcal{H_a}: \beta_i \neq 0$, the lower the p-value, the more surely the *null hypothesis* can be rejected.
+
+We can also easily compute the $95\%$ confidence interval for each $\beta_i$ obtaining:
+```{r}
+# CONFIDENT INTERVALS ==========================================================
+confint(simple_lm)
+```
+
+In the last part of the summary we can observe some already introduced statistics as Residual Standard error (RSE), $R^2$ and $R^2_{adj}$, plus the result of the *Global F-test*, also known as all-or-nothing test,  which is the hypothesis test $\mathcal{H_0}: \beta_i =0 \; \forall i \in \{1,\dots,p-1\}$ vs $\mathcal{H_a}:\exists j \in \{1, \dots, p-1\} \; s.t. \; \beta_j \neq 0$. It essentially compares the complete model to the null model, low p-value means we can reject the null hypothesis therefor the work we are trying to carry out actually makes sense.
+
+
+
+
+
+## Multiple linear regression and interaction effects
+
+The next step is to analyze a multiple linear regression model plus investigating the effect of an interaction term. To begin with in a multiple linear regression model we interpret $\beta_i$ to be the average effect on $Y$ of a one unit increase in $X_i$, holding all the other predictors fixed. We now use also *Ambient Humidity* (AH) as predictor obtaining:
+
+\begin{equation}
+
+log(NO_x) \approx \beta_0+\beta_1 \times AT+ \beta_2 \times AH.
+
+(\#eq:multipleLinReg)
+\end{equation}
+
+Found the coefficient estimates we can compute the *least squares plane*:
+
+\begin{equation}
+
+\hat{y} = \hat{\beta_0}+\hat{\beta_1}x_1+ \hat{\beta_2}x_2
+
+(\#eq:leastSquaresPLane)
+\end{equation}
+
+with $\hat{y}$ prediction on the basis of $AT = x_1$ and $AH = x_2$, shown on the left side of figure \@ref(fig:3dplot). Interacting with the plot is quite clear that some regions of the least squares plane tend to overestimate (when AT and AH values are both low or high) or underestimate (when one of them have high values and the other low) the fitted values, this means that there is probably an *interaction* effect between $AH$ and $AT$ that we are missing, the introduction of this term may improve the model, which become:
+
+\begin{equation}
+
+\begin{aligned}
+log(NO_x) \approx \beta_0+\beta_1\times AT + \beta_2 \times AH + \beta_3 \times(AH \times AT)\\
+= \beta_0 + (\beta_1+\beta_3\times AH)\times AT + \beta_2 \times AH\\
+= \beta_0 + \tilde{\beta}_1 \times AT + \beta_2 \times AH
+\end{aligned}
+
+(\#eq:interactionEffect)
+\end{equation}
+
+meaning the effect of $AT$ on $log(NO_x)$ is no longer constant. $\beta_3$ can be considered as the increase in the $AT$ contribution for a unit increase in $AH$. Left side of figure \@ref(fig:3dplot) shows how the least squares surface now better fit the data.
+
+```{r 3dplot, message = FALSE, warning = FALSE, fig.align="center", fig.width=10 ,fig.height=7, fig.cap=  "interaction effect in multiple linear regression."}
+# MLTIPLE LINEAR REGRESSION MODELS =============================================
+
+# models -----------------------------------------------------------------------
+
+# multiple linear regression
+multiple_lm <- lm(log_nox ~ AT+AH, data = emissions, subset = -test)
+
+# multiple linear regression with interactions
+interaction_lm <- lm(log_nox ~ AT*AH,data = emissions, subset = -test)
+summ <- summary(interaction_lm)
+
+# interaction effect plots -----------------------------------------------------
+at <- pretty(0:35, n=10)
+ah <- pretty(27:101, n=10)
+grid <- expand.grid(ah, at)
+d <- setNames(data.frame(grid), c("AH", "AT"))
+
+# define the regression plane
+vals1 <- predict(multiple_lm, newdata = d)
+plane1 <- t(matrix(vals1, nrow = length(ah), ncol = length(at)))
+
+vals2 <-predict(interaction_lm, newdata = d)
+plane2 <- t(matrix(vals2, nrow = length(ah), ncol = length(at)))
+
+# define colors
+marker_col <- "#121214"
+high_col <- "#3b3b9c"
+low_col <- "#d7d7de"
+
+
+# create the figures
+fig1 <- plot_ly(
+  emissions[-test, ], 
+  x = ~AH, 
+  y = ~AT, 
+  z = ~log_nox, 
+  size=1, 
+  alpha=0.5,
+  scene = "scene1",
+  marker = list(
+    symbol = 'circle', 
+    sizemode = 'diameter'), 
+  sizes = c(3)
+  )
+
+fig1 <- fig1 %>% 
+  add_markers(color = I(marker_col))
+
+fig1 <- fig1 %>% 
+  add_surface(z = ~plane1, x = ~ah, y = ~at, showscale = FALSE, colorscale = list(c(0, low_col), c(1, high_col)))
+  
+fig2 <- plot_ly(
+  emissions[-test, ], 
+  x = ~AH, 
+  y = ~AT, 
+  z = ~log_nox, 
+  size=1, 
+  alpha=0.5,
+  scene = "scene2",
+  marker = list(
+    symbol = 'circle', 
+    sizemode = 'diameter'), 
+  sizes = c(3)
+  )
+
+fig2 <- fig2 %>% 
+  add_markers(color = I(marker_col))
+
+fig2 <- fig2 %>% 
+  add_surface(z = ~plane2, x = ~ah, y = ~at, showscale = FALSE,  colorscale = list(c(0, low_col), c(1, high_col)))
+
+# create the subplot
+fig <- subplot(fig1, fig2)
+
+fig <- fig %>%
+  layout(
+    scene = list(
+      domain = list(x = c(0, 0.49), y = c(0, 1)),
+      xaxis = list(title = 'AH'),
+      yaxis = list(title = 'AT'),
+      zaxis = list(title = 'log(NOx)')
+      ),
+
+    scene2 = list(
+      domain = list(x = c(0.51, 1), y = c(0, 1)),
+      xaxis = list(title = 'AH'),
+      yaxis = list(title = 'AT'),
+      zaxis = list(title = 'log(NOx)')
+      ),
+    
+    annotations = list(
+      list(x=0.15, y = 1, text="least squares plane\n(no interaction)", showarrow = F, xref="paper", yref="paper"),
+      list(x=0.85, y = 1, text="least squares surface\n(interaction effect)", showarrow = F, xref="paper", yref="paper")
+    ),
+    
+    showlegend = FALSE)
+fig
+```
+
+
+
+
+
+
+## Model performances in the original space and models comparison via Anova and AIC
+
+Pay attention that the metrics reported in the last part of the summary are related to the performances evaluated in the $log$ space, to get the real performances in the original space we need to transform the predictions through the exponential function and only then we can use them to compute the [evaluation metrics](#evaluation-metrics) previously declared.
+
+```{r}
+# PREVIOUS MODEL PERFORMANCES===================================================
+pred_simp <- predict(simple_lm, emissions, type="response")[- test] %>% exp()
+pred_multi <- predict(multiple_lm, emissions, type="response")[- test] %>% exp()
+pred_inter <- predict(interaction_lm, emissions, type="response")[- test] %>% exp()
+
+actual <- emissions[-test, 'NOX']
+
+# mae---------------------------------------------------------------------------
+mae_simp <- mae(actual, pred_simp) %>% round(digits=2)
+mae_multi <- mae(actual, pred_multi) %>% round(digits=2)
+mae_inter <- mae(actual, pred_inter) %>% round(digits=2)
+
+# rmse-------------------------------------------------------------------------
+rmse_simp <- rmse(actual, pred_simp) %>% round(digits=2)
+rmse_multi <- rmse(actual, pred_multi) %>% round(digits=2)
+rmse_inter <- rmse(actual, pred_inter) %>% round(digits=2)
+
+# r squared---------------------------------------------------------------------
+rs_simp <- Rsquared(actual, pred_simp) %>% round(digits=2)
+rs_multi <- Rsquared(actual, pred_multi) %>% round(digits=2)
+rs_inter <- Rsquared(actual, pred_inter) %>% round(digits=2)
+
+
+comparison_df <- data.frame(
+  "MAE" = c(mae_simp, mae_multi, mae_inter),
+  "RMSE" = c(rmse_simp, rmse_multi, rmse_inter),
+  "Rsq" = c(rs_simp, rs_multi, rs_inter))
+
+row.names(comparison_df) <- c("simple_lm", "multiple_lm", "interaction_lm")
+as.matrix(comparison_df)
+```
+As we can see the *interaction_lm* actually better fit the data with respect to the other models.
+Besides the performances, a general approach to select a good model is try to find the simplest one which still can well explain the data. According this view we can compare models carrying out the *Anova* type test, or through the *Akaike's Information Criterion* (AIC).
+The Anova test let us comparing a bigger model vs a smaller nested model in order to understand if the smaller model is good enough, in the next example the *simple_lm* and the *multiple_lm* are compared.
+
+```{r}
+# ANOVA ========================================================================
+print(anova(simple_lm, multiple_lm))
+```
+
+The test is an F-based test and a low p-value means we can reject the null hypothesis that the smaller model is good enough in explaining the data.
+Through the AIC also non-nested models can be compared: it takes into account the number of estimated parameters plus one (the variance), penalizing model with an high number of parameters. The driving idea is that having a smaller number of parameters means searching for a simpler explanation of the world,  which is much preferable. This concept is encoded in AIC mathematical formulation
+
+\begin{equation}
+
+AIC = 2(p+1)-log(\hat{L})
+
+(\#eq:aic)
+\end{equation}
+
+where $\hat{L}$ is the maximized likelihood function. A low AIC value means the associated model is a good one and comparing the three previous models is quite obvious that the *interaction_lm* is the better one among them, although having an higher number of parameters.
+```{r}
+# AIC ==========================================================================
+as.matrix(AIC(simple_lm, multiple_lm, interaction_lm))
+```
+
+
+## Multicollinearity measure: Variance Inflaction Factor (VIF)
+
+The *Variance Inflation Factor* (VIF) is a ratio which help in identifying *multicollinearity* problems, in fact collinearity could exist between three or more variables even if no pair of them have a particularly high correlation. The VIF related to the j^th^ coefficient estimate $\hat{\beta}_j$ measures how much the variance of $\hat{\beta}_j$ is inflated by the collinearity and is defined as
+
+\begin{equation}
+
+VIF_j = \frac{1}{1-R^2_{X_j|X_{-j}}}
+
+(\#eq:vif)
+\end{equation}
+
+where $R^2_{X_j|X_{-j}}$ is the $R^2$ when  $X_j$ is regressed on all the remaining predictors. When the other predictors well explain the behavior of $X_j$ the coefficient of determination will be near 1, as a result the VIF will have an high value, on the other side if the other predictors poorly explain $X_j$, the coefficient of determination will be 0, as a result VIF will be near 1. As a rule of thumb, a VIF value that exceeds 5 or 10 highlights a problematic amount of multicollinearity. The approach adopted is to start from a complete model and then to drop the predictor with the highest associated VIF value, define a new model and recompute VIFs for the remaining predictors and repeat the procedure until all VIF values are less than 5, this led to eliminate Compressor Discharge Pressure (CDP), Turbine Energy Yield (TEY) and Gas Turbine Exhaust Pressure (GTEP) as predictors for the final models. The following are the VIF values before and after the predictors elimination.
+
+```{r}
+# MULTICOLLINEARITY MEASURE ====================================================
+# vif computation --------------------------------------------------------------
+
+complete_lm <- lm(log_nox ~ .-NOX-year, data = emissions, subset = c(train, val))
+before <- vif(complete_lm)
+# before
+
+# 1) drop TEY
+uncomplete_lm1 <- lm(log_nox ~ .-CDP-NOX-year, data = emissions, subset = -test)
+# vif(uncomplete_lm1)
+
+# 2) drop CDP
+uncomplete_lm2 <- lm(log_nox ~ .-CDP-TEY-NOX-year, data = emissions, subset = -test)
+# vif(uncomplete_lm2)
+
+# 3) drop GTEP
+uncomplete_lm3 <- lm(log_nox ~ .-GTEP-CDP-TEY-NOX-year, data = emissions, subset = -test)
+after <- vif(uncomplete_lm3) 
+# after
+
+# vif results visualization------------------------------------------------------
+
+after<-c(after[1:4], NaN, after[5:6], NaN, NaN)
+vif_df <- data.frame("before" = before %>% round(digits=2), "after"= after %>% round(digits=2))
+
+as.matrix(vif_df)
+```
+
+## Model selection
+
+We can now define the final models:
+
+- **big_lm**: uses as predictors AT, AP, AH, AFDP, TAT, TIT
+
+- **big_int_lm**: also include the interaction effect between AH and AT
+
+```{r results = FALSE}
+# BIG MODELS====================================================================
+
+# bigger model -----------------------------------------------------------------
+big_lm <- lm(log_nox ~ AT+AP+AH+AFDP+TAT+TIT, data = emissions, subset = -test)
+#summary(big_lm)
+
+# bigger model with interaction effect -----------------------------------------
+#int_lm <- lm(log_nox ~ AT+AH+AP+AFDP+TIT+TAT+AT:AH+AFDP:TAT+AFDP:TIT, data = emissions, subset = -test)
+big_int_lm <- lm(log_nox ~ AT+AH+AP+AFDP+TIT+TAT+AT:AH, data = emissions, subset = -test)
+#summary(int_lm)
+```
+
+for completeness also the three toy models **simple_lm**, **multiple_lm**, **interaction_lm** seen before are included in the model selection phase. Performances of each model are evaluated through 5-folds cross validation strategy: the idea is to split the training data in 5 folds, and in turn use 4 of them to train the model and one for validation, computing the evaluation metrics seen before, until all folds have been used for validation. The evaluation metrics are collected and eventually mediated to have a reliable estimation of the actual performances which we will have on the test set. The best performing model will be selected as final model to be evaluated on the test set.
+
+```{r}
+# CROSS VALIDATION =============================================================
+n_folds <- 5
+folds <- rep_len(1:n_folds, c(train, val) %>% length())
+results_df <- data.frame()
+
+mat_mae <- matrix(, nrow=5, ncol=5)
+mat_rmse <- matrix(, nrow=5, ncol=5)
+mat_rs <- matrix(, nrow=5, ncol=5)
+mat_results <- matrix(, nrow=5, ncol=5)
+
+rownames <- c("simple_lm", "multiple_lm", "interaction_lm", "big_lm", "big_int_lm")
+colnames <- c("MAE", "RMSE", "Rsq", "df", "AIC")
+rownames(mat_mae) <- rownames
+rownames(mat_rmse) <- rownames
+rownames(mat_rs) <- rownames
+rownames(mat_results) <- rownames
+colnames(mat_results) <- colnames
+
+for (i in 1:n_folds){
+  actual <- emissions$NOX[which(folds == i)]
+  
+# AT model
+  simple_lm <- lm(log_nox ~ AT, data = emissions, subset = which(folds != i))
+  simple_pred <- predict(simple_lm, emissions, type = "response")[which(folds == i)] %>% exp()
+  simple_mae <- mae(actual,  simple_pred) 
+  simple_rmse <- rmse(actual, simple_pred)
+  simple_rs <- Rsquared(actual, simple_pred)
+    
+# AT+AH model
+  multiple_lm <- lm(log_nox ~ AT+AH, data = emissions, subset = which(folds != i))
+  multiple_pred <- predict(multiple_lm, emissions, type = "response")[which(folds == i)] %>% exp()
+  multiple_mae <- mae(actual,  multiple_pred) 
+  multiple_rmse <- rmse(actual, multiple_pred)
+  multiple_rs <- Rsquared(actual, multiple_pred)
+  
+# AT + AH + AT:AH model
+  interaction_lm <- lm(log_nox ~ AT*AH, data = emissions, subset = which(folds != i))
+  interaction_pred <- predict(interaction_lm, emissions, type = "response")[which(folds == i)] %>% exp()
+  interaction_mae <- mae(actual,  interaction_pred) 
+  interaction_rmse <- rmse(actual, interaction_pred)
+  interaction_rs <- Rsquared(actual, interaction_pred)
+  
+# AT+AP+AH+AFDP+TAT+TIT model
+  big_lm <- lm(log_nox ~ AT+AP+AH+AFDP+TAT+TIT, data = emissions, subset = which(folds != i))
+  big_pred <- predict(big_lm, emissions, type = "response")[which(folds == i)] %>% exp()
+  big_mae <- mae(actual,  big_pred) 
+  big_rmse <- rmse(actual, big_pred)
+  big_rs <- Rsquared(actual, big_pred)
+  
+# AT+AH+AP+AFDP+TIT+TAT+AFDP:TIT+AFDP:TAT model
+  big_int_lm <- lm(log_nox ~ AT+AH+AP+AFDP+TIT+TAT+AT:AH, data = emissions, subset = which(folds != i))
+  big_int_pred <- predict(big_int_lm, emissions, type = "response")[which(folds == i)] %>% exp()
+  big_int_mae <- mae(actual,  big_int_pred) 
+  big_int_rmse <- rmse(actual, big_int_pred)
+  big_int_rs <- Rsquared(actual, big_int_pred)
+  
+# update metrics matrices
+  mat_mae[,i] <- c(simple_mae, multiple_mae, interaction_mae, big_mae, big_int_mae)
+  mat_rmse[,i] <- c(simple_rmse, multiple_rmse, interaction_rmse, big_rmse, big_int_rmse)
+  mat_rs[,i] <- c(simple_rs, multiple_rs, interaction_rs, big_rs, big_int_rs)
+}
+
+mat_results[,"MAE"] <- rowMeans(mat_mae)
+mat_results[,"RMSE"] <- rowMeans(mat_rmse)
+mat_results[, "Rsq"] <- rowMeans(mat_rs)
+
+
+# add AIC values
+simple_lm <- lm(log_nox ~ AT, data = emissions, subset = -test)
+multiple_lm <- lm(log_nox ~ AT+AH, data = emissions, subset = -test)
+interaction_lm <- lm(log_nox ~ AT*AH, data = emissions, subset = -test)
+big_lm <- lm(log_nox ~ AT+AP+AH+AFDP+TAT+TIT, data = emissions, subset = -test)
+big_int_lm <- lm(log_nox ~ AT+AH+AP+AFDP+TIT+TAT+AT:AH, data = emissions, subset = -test)
+
+mat_results[,4:5] <- as.matrix(AIC(simple_lm, multiple_lm, interaction_lm, big_lm, big_int_lm))
+mat_results %>% round(digits=2)
+```
+
+
+## Residual plots
+
+Visualizing residual vs fitted values is a diagnostic tool to understand if the regression model is reliable or not: the plot should not shows any pattern, if so it means that the residuals are not white noise but contains some unexplained information, maybe due to missing features in the collected data or a wrong predictors choice, in fact it may happen that a linear relationship exists between the response variable and a non-linear transformation of the original features, which was not taken into account in this work.
+
+```{r residualPlots, fig.align="center", fig.width = 10, fig.height = 4, message = FALSE, warning = FALSE, fig.cap = "diagnostic plots for *big_int_lm* model."}
+diagnostic_df <- data.frame("res"= big_int_lm$residuals, "fitted"= big_int_lm$fitted.values)
+
+res_plot <- ggplot(data = diagnostic_df, aes(x=fitted, y=res))+
+  geom_point(alpha = 0.5, size = 1, color = "#121214")+
+  geom_smooth(se = FALSE, color = "#3b3b9c", size=0.9)+
+  geom_abline(slope = 0, intercept = 0, color="red", linetype = 2, size = 0.5)+
+  xlab("fitted values")+
+  ylab("residuals") +
+  ggtitle("residuals plot") +
+  theme(plot.title = element_text(hjust = 0.5))
+  
+qq_res <- ggplot(data = diagnostic_df, aes(sample = res))+
+  geom_qq(alpha = 0.5, size = 1, color = "#121214")+
+  stat_qq_line(color = "red", alpha = 0.7, size = 0.5, linetype = 2)+
+  ggtitle("residuals qq plot") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggarrange(res_plot, qq_res, ncol = 2, nrow = 1, align = "h")
+```
+Looking at the left plot in figure \@ref(fig:residualPlots) we see that residual are distributed around the zero value but the *heteroscedasticity* assumption (same variance for all error terms) is probably violated, but difficult to see because of the high concentration of points in the around the red dashed line. Even if it does not exist a clear pattern the normality assumption is not completely fulfilled, as shown in the left side residual qq plot, there is a different trend in the tails. In conclusion also considering the not so high performances, in fact only ```r mat_results["big_int_lm","Rsq"] %>% round(digits=2)``` of the total variability is explained by the model, the best performing linear regression model is likely to be not a good model choice. 
+
+
+
+
+
+# Random Forest regressor
+Another kind of highly non-linear models, namely *Random Forest*, is investigated in the next sections in trying to overcome the linear regression model limits. The idea behind the random forest is to combine a large number of simpler elements, the regression trees, exploiting all of them to obtain predictions for each observation and then averaging all the predictions for the same observation to get a reliable result. 
+
+
+
+
+
+## Regression trees
+The single regression tree is a non-linear model which starting from the entire predictor space, segments it in different regions and then computes for each region the mean response for the training observations which fall in that region, this value will be the prediction made by the tree for an unseen observation which will fall in that specific region. The goal is to find a set of $J$ regions $R_1,\dots,R_J$, which in our case will be high-dimensional rectangles, which minimizes the $RSS$ 
+
+\begin{equation}
+
+\sum_{j=1}^{J}{\sum_{i \in R_j}{(y_i-\hat{y}_{R_j})^2}}
+
+(\#eq:rssTree)
+\end{equation}
+
+where $\hat{y}_{R_j}$ is the prediction associated to the j^th^ region. The approach to define the regions is called *recursive binary splitting*: the idea is to start from the entire predictor space being a single region and find the predictor $X_j$ and the cut point $s$ in order to split the starting region in two sub-regions that results in the highest decreasing in $RSS$. More technically for each $j$ and $s$ are created two regions:
+
+\begin{equation}
+
+R_1(j,s) = \{X|X_j<s\} \mbox{ and } R_2(j,s) =  \{X|X_j>s\}
+
+(\#eq:regions)
+\end{equation}
+
+where $R_1(j,s)$  ($R_2(j,s)$) is the region of the predictor space where $X_j < s$ ($X_j > s$). Then we search for the $j$ and $s$ values which minimize
+
+\begin{equation}
+
+\sum_{i:\;x_i \in R_1(j,s)}{(y_i-\hat{y}_{R_1})^2}+\sum_{i:\;x_i \in R_2(j,s)}{(y_i-\hat{y}_{R_2})^2}
+
+(\#eq:currentObjective)
+\end{equation}
+
+where $\hat{y}_{R_1}$ and $\hat{y}_{R_2}$ are the mean response of training observation which fall in region $R_1(j,s)$ and $R_2(j,s)$. At each step the tree-building process search for the best split without taking into account a split which could be lead to a better tree in future steps. The process continues and now one of the two regions is split obtaining three regions, and so on until a stop condition is reached (e.g a certain number of nodes in the leaves, a minimum reduction threshold in $RSS$). Applying a three-based method in a two dimensional space, it will search the best step function which fit the available data, such as in the next example.
+
+```{r regressionTree, fig.align="center", message=FALSE, warning=FALSE, fig.width=5.5 ,fig.height=4, fig.cap = "regression tree fitting a noiy signal."}
+# REGRESSION TREE EXAMPLE ======================================================
+# parable function 
+parable <- function(x){
+  y <- x^2 - 6*x + 10
+  return(y)
+}
+
+# set seed to get reproducible results
+set.seed(42)
+
+# define example.data
+x <- runif(150, min = 1, max = 5)
+noise <- rnorm(length(x), mean = 0, sd = 0.2)
+y <-  parable(x) + noise 
+example.data <- data.frame(x = x, y = y)
+
+# define an example task
+example.task <- TaskRegr$new(id = "example", backend = example.data, target = "y")
+
+# define the regression tree learner
+rt <- lrn("regr.rpart")
+rt$train(example.task)
+
+# define example test data
+x_test <- seq(1, 5, by = 0.01)
+y_test <- parable(x_test)
+test.data <- data.frame(x = x_test, y = y_test)
+
+# define example test task
+test.task <- TaskRegr$new(id = "example_test", backend = test.data, target = "y")
+
+# make predictions
+predictions <- rt$predict(test.task)$response
+
+# plot example data points and predictions
+ggplot() +
+  geom_point(aes(x, y), alpha = 0.7) +
+  geom_line(aes(test.data$x, predictions), color = "#3b3b9c", size = 1)
+```
+
+Pay attention that the although being an easy model to understand regression-tree is an *high variance* procedure: if applied repeatedly to different datasets drawn from the same data distribution, three-based methods could yield quite different results. They have a low generalization capability and tend to easily overfit the available data. By aggregating many regression-trees the predictive performances can be greatly improved.
+
+
+
+
+
+## Random forest
+As already said the idea which is behind the random forest is use a large number of regression tree, 500 in our case, to make prediction for the observations and then average the prediction for the same observation in order to obtain a low variance prediction. To obtain a *low-variance* statistical model, each tree is build over a different bootstrapped version of the original training set, and at each tree-building-process step only a subset of the $m$ predictors is selected, this will ensure that if there exist a strong predictors it will not be taken into account at each step and the resulting trees will be *decorrelated* (the average of many decorrelated quantities does lead to an higher decrease in variability than the average of many correlated quantities does).
+The first step now is to define a random forest model to use in our case and evaluate its performances. Due to the fact that it is likely that it will overfit our data, to better evaluate its real performances the current training set (whole data set minus the test set), is again split into training set and validation set, they are respectively $50\%$ and $25\%$ of the entire dataset. The model is built on the  training set and then RMSE, MAE and R^2^ are evaluated both on the same training set and also on the validation set.
+
+```{r}
+# task  ------------------------------------------------------------------------
+task <- TaskRegr$new(
+  id = "nox", 
+  backend = emissions %>% select(-c(NOX, year)), 
+  target = "log_nox"
+  )
+
+# learner ----------------------------------------------------------------------
+rf_one <- lrn("regr.ranger", num.trees = 500, splitrule = "variance")
+rf_one$train(task, row_ids = train)
+train_pred <- rf_one$predict(task, row_ids = train)$response %>% exp()
+val_pred <- rf_one$predict(task, row_ids = val)$response %>% exp()
+
+# resume metrics in a table-----------------------------------------------------
+
+# save actual values
+actual_train <- emissions$NOX[train]
+actual_val <- emissions$NOX[val]
+
+# metrics matrix
+mat_metrics <- matrix(, nrow=3, ncol=2)
+rownames(mat_metrics) <- c("MAE","RMSE","Rsq")
+colnames(mat_metrics) <- c("train", "val")
+
+mat_metrics[,"train"] <- c(
+  mae(actual_train, train_pred),
+  rmse(actual_train, train_pred),
+  Rsquared(actual_train, train_pred)
+  )
+
+mat_metrics[,"val"] <- c(
+  rmse(actual_val, val_pred),
+  mae(actual_val, val_pred),
+  Rsquared(actual_val, val_pred)
+  )
+
+mat_metrics %>% round(digits=2)
+```
+
+As suspected the performances in validation are worse than the performances evaluated on the training set. To have an idea of the random forest features we can plot two histograms related the number of total nodes in each tree and the tree depth.
+
+```{r randomForestFeatures, fig.align="center", fig.width = 10, fig.height = 4, message = FALSE, warning = FALSE}
+# recursive function to get the tree depth--------------------------------------
+# returns the number of nodes of the longest paths, root included
+maxDepth <- function(f_idx, lefts, rights){
+  if (lefts[f_idx] == 0 & rights[f_idx] == 0){
+    return(1)
+  }
+  left_depth <- maxDepth(lefts[f_idx]+1, lefts, rights)
+  right_depth <- maxDepth(rights[f_idx]+1, lefts, rights)
+  return(max(left_depth, right_depth)+1)
+}
+
+# function to get the depths of all the trees in the forest---------------------
+# returns the tree depth for each tree in the forest
+forestDepths <- function(rf){
+  depths <- numeric(0)
+  for (i in 1:rf$model$num.trees){
+    lefts <- rf$model$forest$child.nodeIDs[[i]][[1]]
+    rights <- rf$model$forest$child.nodeIDs[[i]][[2]]
+    depths[i] <- maxDepth(1, lefts, rights)
+  }
+  return(depths)
+}
+
+# random forest depts and number of nodes---------------------------------------
+
+nodes <- lengths(rf_one$model$forest$split.varIDs)
+depths <- forestDepths(rf_one) - 1
+
+# resumes depths and number of nodes in a dataframe
+rf_description_df <- data.frame(
+  nodes = nodes,
+  depths = depths
+  )
+
+# depths and number of nodes histograms-----------------------------------------
+
+nodes_hist <- ggplot()+
+  geom_histogram(aes(nodes), data = rf_description_df, bins = 15, fill="#3b3b9c") +
+  xlab("number of nodes") +
+  ylab("trees count") 
+
+depths_hist <- ggplot()+
+  geom_histogram(aes(depths), data = rf_description_df, bins = 15, fill="#3b3b9c") +
+  xlab("tree depth") +
+  ylab("trees count")
+
+# create a plot grid
+ggarrange(nodes_hist, depths_hist, ncol = 2, nrow = 1, align = "v")
+```
+
+All the trees have a total number of nodes greater than twelve thousands and a depth which exceeds 30 levels. As depth is meant the longest path from the root to the leaves. In order to prevent overfitting the following hyper-parameters are tuned:
+
+- **mtry**: the number of $p$ predictors selected at each step, assumes values $\{3, 4, 5, 6 \}$,
+
+- **max.depth**: the maximum depth a tree could have, assumes values $\{10, 15, 20\}$.
+
+All the 12 possible combinations of the previous hyper-parameters are tested through 3-folds cross validation and eventually the combination which gives the lowest RMSE is selected and used to define the final model. 
+
+```{r message=FALSE, warning=FALSE, eval = FALSE}
+# leaner------------------------------------------------------------------------
+
+rf <- lrn("regr.ranger", num.trees = 500, splitrule = "variance")
+# training task ---------------------------------------------------------------
+
+train_task <- TaskRegr$new(
+  id = "train", 
+  backend = emissions[c(train, val), ] %>% select(-c(NOX, year)), 
+  target = "log_nox"
+  )
+
+# tuning space------------------------------------------------------------------
+tune_ps <- ParamSet$new(
+  list(
+    ParamDbl$new("max.depth", lower = 5, upper = 20),
+    ParamInt$new("mtry", lower = 2, upper = 6)
+    )
+  )
+
+# evaluation measure------------------------------------------------------------
+
+MeasureOriginalRootMSE = R6::R6Class("MeasureOriginalRootMSE",
+  inherit = mlr3::MeasureRegr,
+  public = list(
+    initialize = function() {
+      super$initialize(
+        # custom id for the measure
+        id = "original_root_mse",
+
+        # additional packages required to calculate this measure
+        packages = character(),
+
+        # properties, see below
+        properties = character(),
+
+        # required predict type of the learner
+        predict_type = "response",
+
+        # feasible range of values
+        range = c(0, Inf),
+
+        # minimize during tuning?
+        minimize = TRUE
+      )
+    }
+  ),
+
+  private = list(
+    # custom scoring function operating on the prediction object
+    .score = function(prediction, ...) {
+      original_root_mse = function(truth, response) {
+        
+        original_mse = mean((exp(truth) - exp(response))^2)
+        sqrt(original_mse)
+      }
+
+      original_root_mse(prediction$truth, prediction$response)
+    }
+  )
+)
+
+mlr3::mlr_measures$add("original_root_mse", MeasureOriginalRootMSE)
+
+measure <- msr("original_root_mse")
+
+# terminator--------------------------------------------------------------------
+terminator <- trm("none")
+
+# tuning instances--------------------------------------------------------------
+instance <- TuningInstanceSingleCrit$new(
+  task = train_task,
+  learner = rf,
+  resampling = rsmp("cv", folds = 3),
+  measure = measure,
+  search_space = tune_ps,
+  terminator = terminator
+)
+
+# tuner-------------------------------------------------------------------------
+design <- data.table(expand.grid(max.depth = seq(10, 20, by = 5), mtry = 3:6))
+tuner <- tnr("design_points", design = design) 
+
+# optimize instances------------------------------------------------------------
+tuner$optimize(instance)
+```
+
+The following is the best hyper-parameters values combination and the resulting RMSE is not computed in the log space, but in the original one. As can be seen in the previous code chunk to do that a new *measure object* identified as *original_root_mse*, which inherit `mlr3:MeasureRegr`, is defined and added to the available `mlr3` measures. The new measure is retrieve through `msr("original_root_mse")` and inserted in the *tuning instance object*, exploited in tuning the model.
+
+```{r}
+# TUNING RESULTS ===============================================================
+# print(instance$result)
+```
+
+After tuning, the metrics are again evaluated on the validation set and compared with the previous one to show the actual enhancement in performances.
+
+```{r}
+rf <- lrn("regr.ranger")
+param_list <- list(
+  splitrule = "variance",
+  num.trees = 500,
+  importance = "impurity",
+  mtry = NULL,
+  max.depth = NULL )
+
+# retrain models on train---------------------------------------------------
+
+# nox
+param_list$mtry <- 5 # instance_nox$result$mtry
+param_list$max.depth <- 20 # instance_nox$result$max.depth
+
+rf$param_set$values <- param_list
+
+rf$train(task, row_ids = train)
+new_train_pred <- rf$predict(task, row_ids = train)$response %>% exp()
+new_val_pred <- rf$predict(task, row_ids = val)$response %>% exp()
+
+# print results ----------------------------------------------------------------
+
+# metrics dataframe
+mat_tuned_metrics <- matrix(, nrow=3, ncol=2)
+rownames(mat_tuned_metrics) <- c("MAE","RMSE","Rsq")
+colnames(mat_tuned_metrics) <- c("val", "val_after_tuning")
+
+mat_tuned_metrics[,"val"] <- c(
+  mae(actual_val, val_pred),
+  rmse(actual_val, val_pred),
+  Rsquared(actual_val, val_pred)
+  )
+
+mat_tuned_metrics[,"val_after_tuning"] <- c(
+  mae(actual_val, new_val_pred),
+  rmse(actual_val, new_val_pred),
+  Rsquared(actual_val, new_val_pred)
+  )
+
+mat_tuned_metrics %>% round(digits=2)
+```
+
+# Test results
+
+The *big_int_lm* linear regression model and the random forest model with the best parameters are now trained on the whole whole starting training set (entire dataset minus test set), and their performances are evaluated on the test set. To compare their behavior for both models *actual test values* vs *predicted values* plots are shown in figure \@ref(fig:modelsBehavior).
+```{r message=FALSE, warning=FALSE, results='hide'}
+# BEST MODELS TEST PERFORMANCES=================================================
+
+# models------------------------------------------------------------------------
+
+# definition
+lm <- lm(log_nox ~ AT+AH+AP+AFDP+TIT+TAT+AT:AH, data = emissions, subset = -test)
+rf <-  lrn("regr.ranger", num.trees = 500, splitrule = "variance", max.depth = 20, mtry = 5)
+rf$train(task, row_ids = c(train, val))
+
+# predictions
+actual_test <- emissions$NOX[test]
+test_pred_lm <- predict(lm, emissions, type = "response")[test] %>% exp()
+test_pred_rf <- rf$predict(task, row_ids = test)$response %>% exp()
+
+# results table-----------------------------------------------------------------
+
+mat_test <- matrix(, nrow=3, ncol=2)
+rownames(mat_test) <- c("MAE","RMSE","Rsq")
+colnames(mat_test) <- c("lm", "rf")
+
+mat_test[,"lm"] <- c(
+  mae(actual_test, test_pred_lm),
+  rmse(actual_test, test_pred_lm),
+  Rsquared(actual_test, test_pred_lm)
+  )
+
+mat_test[,"rf"] <- c(
+  mae(actual_test, test_pred_rf),
+  rmse(actual_test, test_pred_rf),
+  Rsquared(actual_test, test_pred_rf)
+  )
+
+mat_test %>% round(digits=2)
+```
+Looking at the evaluated test metrics and the following plots is quite clear that the random forest outclasses the linear regression model.
+
+```{r modelsBehavior, fig.align="center", fig.width = 10, fig.height = 4, message = FALSE, warning = FALSE, fig.cap="final models behavior."} 
+act_pred_df <- data.frame(
+  actual = actual_test,
+  lm_pred = test_pred_lm,
+  rf_pred = test_pred_rf
+)
+
+lm_point <- ggplot() +
+  geom_point(data = act_pred_df, aes(actual, lm_pred), alpha = 0.6) +
+  geom_abline(slope = 1, intercept = 0, color = "red", alpha = 0.6, linetype = 2, size = 0.6) +
+  xlab("actual test response") +
+  ylab("lm predicted response")
+
+rf_point <- ggplot()+
+  geom_point(data = act_pred_df, aes(actual, rf_pred), alpha = 0.6) +
+  geom_abline(slope = 1, intercept = 0, color = "red", alpha = 0.6, linetype = 2, size=0.6)+
+  xlab("actual test response") +
+  ylab("rf predicted response")
+
+ggarrange(lm_point, rf_point, ncol = 2, nrow = 1, align = "v")
+```
+
+
+
+
+# Conclusion
+
+Linear regression models are the simplest models one can exploit in carrying out a regression task, considering the high complexity of some problems they sometimes cannot result in having an high accuracy, but what differentiate them from other approaches is the statistical information which can be retrieved about the predicted coefficients. In contrast, non linear models such as the Random Forest, could yield better accuracy taking into account the non-linearity inherent in natural phenomema. In real PEMS design both the models are discarded in favor of more accurate and complex models which lie in the field of neural networks, following this direction a lately investigated model is the *Extreme learning Machine*, whose application in this field is studied in @KAYA.
+
+
+
+
+# References
+
