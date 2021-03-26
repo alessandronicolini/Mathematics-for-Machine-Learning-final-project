@@ -47,7 +47,7 @@ The aim of the work is to create a PEMS, which essentially carries out a *regres
 
 # Dev environment
 
-The project is an R notebook completely developed in R, a language for statistical computing, through the RStudio IDE, which exploiting [R markdown](https://rmd4sci.njtierney.com/) lets you create professional and well organized data science project reports. In a R notebook code chunks are interspersed by markdown chunks where you can explain each analysis phase, and both plots and tables can be visualized to clearly communicate the results. The R notebook is then knit to create a pdf or a html document. The set of loaded libraries provide useful functions, it is worth mentioning [KableExtra](https://cran.r-project.org/web/packages/kableExtra/vignettes/awesome_table_in_html.html) used to create awesome html tables, [ggplot](https://ggplot2.tidyverse.org/index.html) and [plotly](https://plotly.com/r/), used to create plots, and the novel machine learning library [mlr3](https://mlr3book.mlr-org.com/) concerning the Random Forest.
+The project is an R notebook completely developed in R, a language for statistical computing, through the RStudio IDE, which exploiting [R markdown](https://rmd4sci.njtierney.com/) lets you create professional and well organized data science project reports. In a R notebook code chunks are interspersed by markdown chunks where you can explain each analysis phase, and both plots and tables can be visualized to clearly communicate the results. The R notebook is then knit to create a pdf or a html document. The set of loaded libraries provide useful functions, it is worth mentioning [KableExtra](https://cran.r-project.org/web/packages/kableExtra/vignettes/awesome_table_in_html.html) used to customize html tables, [ggplot](https://ggplot2.tidyverse.org/index.html) and [plotly](https://plotly.com/r/), used to create plots, and the novel machine learning library [mlr3](https://mlr3book.mlr-org.com/) concerning the Random Forest.
 
 ```{r results='hide', message=FALSE, warning=FALSE}
 # SOME USEFUL LIBRARIES=========================================================
@@ -78,7 +78,7 @@ library(mlr3learners)
 library(paradox)
 library(mlr3tuning)
 
-fill_color <- "#4a6ad4"
+fill_color <- "#2766db"
 ```
 
 
@@ -651,7 +651,7 @@ plane2 <- t(matrix(vals2, nrow = length(ah), ncol = length(at)))
 
 # define colors
 marker_col <- "#121214"
-high_col <- fill_color
+high_col <- "#1d60de"
 low_col <- "#d7d7de"
 
 
@@ -991,7 +991,7 @@ Pay attention that the although being an easy model to understand regression-tre
 ## Random forest
 As already said the idea which is behind the random forest is use a large number of regression tree, 500 in our case, to make prediction for the observations and then average the prediction for the same observation in order to obtain a low variance prediction. To obtain a *low-variance* statistical model, each tree is build over a different bootstrapped version of the original training set, and at each tree-building-process step only a subset of the $m$ predictors is selected, this will ensure that if there exist a strong predictors it will not be taken into account at each step and the resulting trees will be *decorrelated* (the average of many decorrelated quantities does lead to an higher decrease in variability than the average of many correlated quantities does). The first step now is to define a random forest model to use in our case and evaluate its performances. Due to the fact that it is likely to overfit the data, to better evaluate its real performances, the model is built on the training set and then RMSE and MAE are evaluated both on training set and also on the validation set.
 
-```{r}
+```{r, results='hide'}
 # task  ------------------------------------------------------------------------
 task <- TaskRegr$new(
   id = "nox", 
@@ -1025,11 +1025,15 @@ mat_metrics[,"val"] <- c(
   mae(actual_val, val_pred),
   rmse(actual_val, val_pred)
   )
+```
 
+As suspected the performances in validation are worse than the performances evaluated on the training set.
+
+```{r}
 mat_metrics %>% round(digits=2)
 ```
 
-As suspected the performances in validation are worse than the performances evaluated on the training set. To have an idea of the random forest features we can plot two histograms related the number of total nodes in each tree and the tree depth.
+To have an idea of the random forest features we can plot two histograms related the number of total nodes in each tree and the tree depth.
 
 ```{r randomForestFeatures, fig.align="center", fig.width = 10, fig.height = 4, message = FALSE, warning = FALSE}
 # recursive function to get the tree depth--------------------------------------
@@ -1265,11 +1269,14 @@ mat_test[,"rf"] <- c(
   mae(actual_test, test_pred_rf),
   rmse(actual_test, test_pred_rf)
   )
+```
 
+Looking at the evaluated test metrics and the plots is quite clear that the random forest outclasses the linear regression model.
+
+```{r}
 mat_test %>% round(digits=2)
 ```
 
-Looking at the evaluated test metrics and the following plots is quite clear that the random forest outclasses the linear regression model.
 
 ```{r modelsBehavior, fig.align="center", fig.width = 10, fig.height = 4, message = FALSE, warning = FALSE, fig.cap="final models behavior."} 
 act_pred_df <- data.frame(
