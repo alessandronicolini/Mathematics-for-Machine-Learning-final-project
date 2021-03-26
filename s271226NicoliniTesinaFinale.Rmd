@@ -77,6 +77,8 @@ library(mlr3viz)
 library(mlr3learners)
 library(paradox)
 library(mlr3tuning)
+
+fill_color <- "#4a6ad4"
 ```
 
 
@@ -88,7 +90,7 @@ library(mlr3tuning)
 
 # DATA LOADING==================================================================
 
-path <- "/home/alessandro/Documents/DataScienceEng/1_2/Mathematics_in_Machine_learning/NOxEmissionData/pp_gas_emission/"
+path <- "/home/alessandro/Documents/DataScienceEng/1_2/Mathematics_in_Machine_learning/Mathematics-for-Machine-Learning-final-project/pp_gas_emission/"
 
 # dataframe initilization
 emissions_raw <- data.frame()
@@ -178,7 +180,7 @@ attributes_df %>%
 ```
 
 
-The dataset was retrieved from UCI Machine Learning Repository at this [link](https://archive.ics.uci.edu/ml/datasets/Gas+Turbine+CO+and+NOx+Emission+Data+Set). It contains data concerning a gas turbine located in Turkey's north western region for the purpose of studying flue gas emissions, namely CO and NO~x~ (NO + NO~2~). The dataset has `r n` instances of 11 sensor measures aggregated over one hour, collected over a five years period, from 01/01/2011 to 31/12/2015, and sorted by chronological order. The dataset does not contain any missing value. For work-organization and clarity sake only the NO~x~ response variable is studied, while CO is dropped from the dataset. There is no time reference among the available attributes, the *year* attribute has been added only to show how the empirical distribution of the response variable slightly changes over the years, it is not used during the analysis. Due to this fact the dataset splitting approach adopted by @KAYA (2011-2012 train, 2013 validation and 2014-2015 test) was abandoned in favor of a shuffling strategy and a subsequent partition using 50% as train, 25% as validation, and the remaining 25% as test. The test set has been created and used only for the test purpose during the analysis, avoiding any possible insight about its characteristics. Table \@ref(tab:attributesTab) summarizes the attribute names and ranges, while their meaning is clarified in the next section. The dataset visualization follows below.
+The dataset was retrieved from UCI Machine Learning Repository at this [link](https://archive.ics.uci.edu/ml/datasets/Gas+Turbine+CO+and+NOx+Emission+Data+Set). It contains data concerning a gas turbine located in Turkey's north western region for the purpose of studying flue gas emissions, namely CO and NO~x~ (NO + NO~2~). The dataset has `r n` instances of 11 sensor measures aggregated over one hour, collected over a five years period, from 01/01/2011 to 31/12/2015, and sorted by chronological order. The dataset does not contain any missing value. For work-organization and clarity sake only the NO~x~ response variable is studied, while CO is dropped from the dataset. There is no time reference among the available attributes, the *year* attribute has been added only to show how the empirical density of the response variable slightly changes over the years, it is not used during the analysis. Due to this fact the dataset splitting approach adopted by @KAYA (2011-2012 train, 2013 validation and 2014-2015 test) was abandoned in favor of a shuffling strategy and a subsequent partition using 50% as train, 25% as validation, and the remaining 25% as test. The test set has been created and used only for the test purpose during the analysis, avoiding any possible insight about its characteristics. Table \@ref(tab:attributesTab) summarizes the attribute names and ranges, while their meaning is clarified in the next section. The dataset visualization follows below.
 
 ```{r rows.print = 7}
 emissions
@@ -187,7 +189,7 @@ emissions
 ## Turbine working principle
 
 ```{r turbineFig, fig.align = 'center', out.width = "90%", fig.cap = "Gas turbine main components and measurement positions."}
-knitr::include_graphics(here::here("/home/alessandro/Documents/DataScienceEng/1_2/Mathematics_in_Machine_learning/NOxEmissionData/gas_turbine.png"))
+knitr::include_graphics(here::here("/home/alessandro/Documents/DataScienceEng/1_2/Mathematics_in_Machine_learning/Mathematics-for-Machine-Learning-final-project/gas_turbine.png"))
 ```
 
 The gas turbine in figure \@ref(fig:turbineFig) is the prime mover for an electricity generator. It is able to transform the chemical energy in the fuel (natural gas or similar fuel), into mechanical energy, which is transferred from the turbine exit shaft to the generator's shaft through a gearbox. Air is let into the turbine through the *air intake*, going across the *compressor*. This component is essential to guarantee a self-sustaining combustion process. At first an initial momentum is imparted to the turbine rotor from an external engine, until the compressor reaches a certain speed. The air is incrementally compressed as it passes through each compressor stage increasing both its pressure and temperature and then reaches the *combustion chamber*, where it is mixed with a proper amount of natural gas. The Air/Gas ratio depends on a series of factors: air quality, heating value of the gas, humidity and so on. An ignition system steps in providing heat, and will be put out of service as soon as the fire is established and stabilized in the combustion chamber. The high pressure exhaust gas produced in the combustion chamber is applied to the *turbine blades* inducing the rotation of the turbine shaft, and then is conducted to the *exhaust stack*. The rotation of the shaft drives the compressor to draw in and compress more air to sustain continuous combustion.
@@ -196,13 +198,13 @@ The gas turbine in figure \@ref(fig:turbineFig) is the prime mover for an electr
 
 ### Histogram of the response
 
-The data has been already split into train, val and test and EDA is performed only to the train an val part merged together. The data exploratory phase starts with a look at the output variable empirical density in figure \@ref(fig:originalResponseFig). The *histogram* is an *approximated representation* of the real NO~x~ density function, it gives a rough sense of the density associated to the underlying distribution of the NO~x~ data. The range of the values that NO~x~ can take is divided into intervals of equals width. The height of each bar equals the *empirical density* associated to the corresponding interval, and it is defined as the *empirical probability* divided by the interval width, where the probability is computed as the number of sample observations within the interval divided by the total number of observations. It appears to be positively skewed, and this is a problem because the normality of the dependent variable is an assumption in performing linear regression. The Q-Q plot clearly highlights the normality assumption violation.
+The data has been already split into train, val and test and EDA is performed only to the train an val part merged together. The data exploratory phase starts with a look at the output variable empirical density in figure \@ref(fig:originalResponseFig). The *histogram* is an *approximated representation* of the real NO~x~ probability density, it gives a rough sense of the density associated to the underlying distribution of the NO~x~ data. The range of the values that NO~x~ can take is divided into intervals of equals width. The height of each bar equals the *empirical density* associated to the corresponding interval, and it is defined as the *empirical probability* divided by the interval width, where the probability is computed as the number of sample observations within the interval divided by the total number of observations. It appears to be positively skewed, and this is a problem because the normality of the dependent variable is an assumption in performing linear regression. The Q-Q plot clearly highlights the normality assumption violation.
 
 ```{r originalResponseFig, fig.align="center",fig.width = 7.5, fig.height = 3, message = FALSE, warning = FALSE, fig.cap = "NO~x~ empirical density function."}
 # ORIGINAL RESPONSE VARIABLE HISTOGRAM =========================================
 
 respHist <- ggplot() +
-  geom_histogram(data = emissions[-test, ], aes(x = NOX, y = ..density..), fill="#3b3b9c") +
+  geom_histogram(data = emissions[-test, ], aes(x = NOX, y = ..density..), fill=fill_color) +
   xlab("NOx")+
   ylab("emp. density")+
   ggtitle("Response variable")+
@@ -229,7 +231,7 @@ y(\lambda) =
 (\#eq:boxCox)
 \end{equation}
 
-This is a family of exponential transformation which rely on a parameter called $\lambda$. With the `powerTransform()` function in the `car` package we can generate a maximum-likelihood estimation of the power $\lambda$ most likely to normalize the transformed response. The actual transformation is then applied through the `bcPower()` function. 
+This is a family of exponential transformation which relies on a parameter called $\lambda$. With the `powerTransform()` function in the `car` package we can generate a maximum-likelihood estimation of the power $\lambda$ most likely to normalize the transformed response. The actual transformation is then applied through the `bcPower()` function. 
 
 ```{r  message = FALSE, warning = FALSE}
 # response transformation ------------------------------------------------------
@@ -243,11 +245,11 @@ emissions$bcNOX <- bcPower(emissions$NOX, lambda=lambda)
 
 Applying the function to the NO~x~ response we obtain that the suggested power is `r lambda`, and that we can reject both the log-transformation and no-transformation hypothesis. Applying the transformation the situation gets better, even though we can see from the Q-Q plot that there are still some problems in the tails. From now on the transformed response variable will be called bcNO~x~.
 
-```{r newResponseFig, fig.align="center", fig.width = 7.5, fig.height = 3, message = FALSE, warning = FALSE, fig.cap = "bcNO~x~ empirical density distribution."}
+```{r newResponseFig, fig.align="center", fig.width = 7.5, fig.height = 3, message = FALSE, warning = FALSE, fig.cap = "bcNO~x~ empirical density."}
 
 # bcNOX empirical density ------------------------------------------------------
 transHist <- ggplot() +
-  geom_histogram(data = emissions[-test, ], aes(x = bcNOX, y = ..density..), fill="#3b3b9c")+
+  geom_histogram(data = emissions[-test, ], aes(x = bcNOX, y = ..density..), fill=fill_color)+
   xlab("NOx transformed")+
   ylab("emp. density")+
   ggtitle("Transformed response variable")+
@@ -269,7 +271,7 @@ In order to motivate the shuffling choice instead of creating splits according t
 
 # Yearly bcNOX empirical density -----------------------------------------------
 ggplot() + 
-  geom_histogram(data = emissions[-test, ], aes(x = bcNOX, y=..density..), fill="#3b3b9c")+
+  geom_histogram(data = emissions[-test, ], aes(x = bcNOX, y=..density..), fill=fill_color)+
   scale_x_continuous(breaks= pretty_breaks())+
   facet_wrap(~year, nrow = 1, ncol = 5)+
   theme(panel.spacing = unit(0.8, "lines"))+
@@ -297,7 +299,7 @@ r_{x,y}=\frac{\sum_{i=1}^{n}{(x_i-\overline{x})(y_i-\overline{y})}}{\sqrt{\sum_{
 \end{equation}
 
 where $n$ is the sample size, $x_i$ is the *i*-th sample element and $\overline{x}=\frac{1}{n}\sum_{i=1}^{n}{x_i}$ is the sample mean (analogously for $y_i$ and $\overline{y}$).\
-Identifying closely related predictor variables is an important step in a regression context, in fact problems could arise since it is difficult to separate out the individual effect on the response of this kind of variables. The easiest solution adopted in this work is to eliminate one of the highly correlated features. Two are the main limits of the Pearson's correlation coefficient:
+Identifying closely related predictor variables is an important step in a regression context, in fact problems could arise since it is difficult to separate out the individual effect on the response of this kind of variables. The easiest solution adopted in this work is to select just some of the available predictors, as we will seen in the [features selection](#features-selection-and-big-model) section. Two are the main limits of the Pearson's correlation coefficient:
 
 1. it is bivariate, still it could also happen that a high linear correlation exists between a predictor and some of the others, namely multi-collinearity; 
 
@@ -368,19 +370,19 @@ x_{n1}&x_{n2}&\cdots&x_{np}
 
 where:
 
-- $\boldsymbol{Y}$ is the $n \cdot 1$ *response vector* 
+- $\boldsymbol{Y}$ is the $n \times 1$ *response vector* 
 
-- $\boldsymbol{X}$ is $n\cdot p$ matrix containing the values of $p-1$ predictors because the first column is usually a column of $1$'s. They are not random but can be considered as values under the control of the experimenter
+- $\boldsymbol{X}$ is $n\times p$ matrix containing the values of $p-1$ predictors because the first column is usually a column of $1$'s. They are not random but can be considered as values under the control of the experimenter
 
-- $\boldsymbol{\beta}$ is the $p \cdot 1$ vector of unknown parameters object of the statistical inference
+- $\boldsymbol{\beta}$ is the $p \times 1$ vector of unknown parameters object of the statistical inference
 
-- $\boldsymbol{\epsilon}$ is a $n\cdot1$ vector of *unobservable* random variables which take into account the error due to different sources of uncertainty (simplicity of the model, measurement errors, natural variability, ...). 
+- $\boldsymbol{\epsilon}$ is a $n\times 1$ vector of *unobservable* random variables which take into account the error due to different sources of uncertainty (simplicity of the model, measurement errors, natural variability, ...). 
 
 The random error vector is modeled as white noise added to the signal $\boldsymbol{X\beta}$, thus having a multivariate normal distribution:
 
 \begin{equation}
 
-\boldsymbol{\epsilon} \sim \mathcal{N}_n\big(\boldsymbol{0}_{n \cdot 1},\; \sigma^2\boldsymbol{I}_{n \cdot n}\big)
+\boldsymbol{\epsilon} \sim \mathcal{N}_n\big(\boldsymbol{0}_{n \times 1},\; \sigma^2\boldsymbol{I}_{n \times n}\big)
 
 \end{equation}
 
@@ -389,7 +391,7 @@ The fact implies that $Y_1, \dots, Y_n$ are normal independent distributed, but 
 
 \begin{equation}
 
-\boldsymbol{Y} \sim \mathcal{N}_n\big(\boldsymbol{X\beta},\; \sigma^2\boldsymbol{I}_{n \cdot n}\big)
+\boldsymbol{Y} \sim \mathcal{N}_n\big(\boldsymbol{X\beta},\; \sigma^2\boldsymbol{I}_{n \times n}\big)
 
 \end{equation}
 
@@ -527,7 +529,7 @@ bcNO_x \approx \beta_0 + \beta_1\cdot AT.
 \end{equation}
 
 It is known as *population regression line* and is the best linear approximation to the true relationship between $AT$ and $bcNO_x$.
-Applying the $\boldsymbol{\beta}$ estimator \@ref(eq:betaEstimator) we find the *least squares line*, also shown in figure \@ref(fig:leastSquaresLine):
+Applying the $\hat{\boldsymbol{\beta}}$ estimator \@ref(eq:betaEstimator) we find the *least squares line*, also shown in figure \@ref(fig:leastSquaresLine):
 
 \begin{equation}
 
@@ -544,7 +546,7 @@ simple_lm <- lm(bcNOX ~ AT, data = emissions, subset = train)
 # plot -------------------------------------------------------------------------
 ggplot(data = emissions[train, ], aes(x = AT, y = bcNOX))+
   geom_point(alpha = 0.5, color = "#121214", size = 1) +
-  geom_smooth(method = "lm", se=FALSE, color = "#3b3b9c", size = 0.8)+
+  geom_smooth(method = "lm", se=FALSE, color = fill_color, size = 0.8)+
   ylab("bcNOx") +
   xlab("Ambient Temperature") +
   ggtitle("Least squares line")+
@@ -621,20 +623,7 @@ Found the coefficient estimates we can compute the *least squares plane*:
 
 \end{equation}
 
-with $\hat{y}$ prediction on the basis of $AT = x_1$ and $AH = x_2$, shown on the left side of figure \@ref(fig:3dplot). Interacting with the plot is quite clear that some regions of the least squares plane tend to overestimate (when AT and AH values are both low or high) or underestimate (when one of them have high values and the other low) the fitted values, this means that there is probably an *interaction* effect between $AH$ and $AT$ that we are missing, the introduction of this term may improve the model, which becomes:
-
-\begin{equation}
-
-\begin{aligned}
-bcNO_x \approx \beta_0+\beta_1\cdot AT + \beta_2 \cdot AH + \beta_3 \cdot(AH \cdot AT)\\
-= \beta_0 + (\beta_1+\beta_3\cdot AH)\cdot AT + \beta_2 \cdot AH\\
-= \beta_0 + \tilde{\beta}_1 \cdot AT + \beta_2 \cdot AH
-\end{aligned}
-
-(\#eq:interactionEffect)
-\end{equation}
-
-meaning that the effect of $AT$ on $bcNO_x$ is no longer constant. $\beta_3$ can be considered as the increase in the $AT$ contribution for a unit increase in $AH$. Right side of figure \@ref(fig:3dplot) shows how the least squares surface now better fit the data.
+with $\hat{y}$ prediction on the basis of $AT = x_1$ and $AH = x_2$, shown on the left side of figure \@ref(fig:3dplot). 
 
 ```{r 3dplot, message = FALSE, warning = FALSE, fig.align="center", fig.width=10 ,fig.height=7, fig.cap=  "interaction effect in multiple linear regression."}
 # MLTIPLE LINEAR REGRESSION MODELS =============================================
@@ -662,7 +651,7 @@ plane2 <- t(matrix(vals2, nrow = length(ah), ncol = length(at)))
 
 # define colors
 marker_col <- "#121214"
-high_col <- "#3b3b9c"
+high_col <- fill_color
 low_col <- "#d7d7de"
 
 
@@ -735,7 +724,20 @@ fig <- fig %>%
 fig
 ```
 
+Interacting with the plot is quite clear that some regions of the least squares plane tend to overestimate (when AT and AH values are both low or high) or underestimate (when one of them have high values and the other low) the fitted values, this means that there is probably an *interaction* effect between $AH$ and $AT$ that we are missing, the introduction of this term may improve the model, which becomes:
 
+\begin{equation}
+
+\begin{aligned}
+bcNO_x \approx \beta_0+\beta_1\cdot AT + \beta_2 \cdot AH + \beta_3 \cdot(AH \cdot AT)\\
+= \beta_0 + (\beta_1+\beta_3\cdot AH)\cdot AT + \beta_2 \cdot AH\\
+= \beta_0 + \tilde{\beta}_1 \cdot AT + \beta_2 \cdot AH
+\end{aligned}
+
+(\#eq:interactionEffect)
+\end{equation}
+
+meaning that the effect of $AT$ on $bcNO_x$ is no longer constant. $\beta_3$ can be considered as the increase in the $AT$ contribution for a unit increase in $AH$. Right side of figure \@ref(fig:3dplot) shows how the least squares surface now better fit the data. After the introduction of the interaction effect, the $R^2$ value increases from ```r summary(multiple_lm)$r.squared %>% round(digits=2)``` to ```r summary(interaction_lm)$r.squared %>% round(digits=2)```.
 
 
 
@@ -778,7 +780,7 @@ after <- c(after[1:4], NaN, after[5:6], NaN, NaN)
 vif_df <- data.frame("before" = before %>% round(digits=2), "after"= after %>% round(digits=2))
 as.matrix(vif_df)
 ```
-Now that we selected 6 predictors we can study if there exist just a subset of them that is able to fit the data as well as all of them do. Since there is a small number of predictors we can use the *all subsets regression* approach, through the `regsubsets` function in the `leaps` library. We ask for the 4 best models of each predictors subset size through the parameter `nbest`, and specify the coefficient of determination $R^2$ as criterion for reporting the best model through the parameter `method`.
+Now that we selected 6 predictors we can study if there exist just a subset of them that is able to fit the data as well as all of them do. Since there is a small number of predictors we can use the *all subsets regression* approach, through the `regsubsets` function in the `leaps` library. We ask for the 4 best models of each predictors subset size through the parameter `nbest`, and specify the coefficient of determination $R^2$ as criterion for reporting the best model.
 
 ```{r fig.align="center", fig.width=6.5 ,fig.height=5, fig.cap="all subset regression for feature selection."}
 leaps <- regsubsets(bcNOX ~ AP+AT+AH+AFDP+TIT+TAT, data=emissions[train, ], nbest=4, method="exhaustive")
@@ -795,8 +797,7 @@ big_interaction_lm <- lm(bcNOX ~  AP+AT+AH+TAT+AT:AH, data=emissions, subset=tra
 
 
 
-## Model selection
-### Models comparison via Anova and AIC
+## Model selection: Anova, AIC and evaluation metrics
 
 A general approach to select a good model is try to find the simplest one which still can well explain the data. According this view we can compare models carrying out the *Anova* type test, or through the *Akaike's Information Criterion* (AIC).
 The Anova test let us comparing a bigger model vs a smaller nested model in order to understand if the smaller model is good enough, in the next example the `simple_lm` and the `multiple_lm` are compared.
@@ -814,24 +815,11 @@ AIC = 2(p+1)-log(\hat{L})
 
 \end{equation}
 
-where $\hat{L}$ is the maximized likelihood function and a low AIC value means the associated model is a good one.
+where $\hat{L}$ is the maximized likelihood function and a low AIC value means the associated model is a good one. To select the best model we can now compare all the models defined so far, also computing the evaluation metrics for the original NO~x~ response.
 
 ```{r}
-# AIC ==========================================================================
-as.matrix(AIC(simple_lm, multiple_lm, interaction_lm, big_lm, big_interaction_lm))
-```
 
-Comparing all the models we defined we see that the `big_interaction_model` is the better one among them, although having the higher number of parameters.
-
-
-
-
-
-### Model performance
-To finally select the best model we compute the model performance on the validation set, in the original space, inverting the transformation on the predicted values; only then we can use the predicted values to compute the previously introduced [evaluation metrics](#evaluation-metrics).
-
-```{r}
-# PREVIOUS MODEL PERFORMANCES ==================================================
+# AIC and MODEL PERFORMANCE ====================================================
 # inverse box cox --------------------------------------------------------------
 invBC <- function(x, lmb){
   y <- (x*lmb+1)^(1/lmb)
@@ -864,6 +852,7 @@ rmse_big_inter <- rmse(actual, pred_big_inter) %>% round(digits=3)
 
 # performance df ---------------------------------------------------------------
 comparison_df <- data.frame(
+  AIC(simple_lm, multiple_lm, interaction_lm, big_lm, big_interaction_lm),
   "MAE" = c(mae_simp, mae_multi, mae_inter, mae_big, mae_big_inter),
   "RMSE" = c(rmse_simp, rmse_multi, rmse_inter, rmse_big, rmse_big_inter))
 row.names(comparison_df) <- c("simple_lm", "multiple_lm", "interaction_lm", "big_lm", "big_interaction_lm")
@@ -871,7 +860,8 @@ row.names(comparison_df) <- c("simple_lm", "multiple_lm", "interaction_lm", "big
 # visualization ----------------------------------------------------------------
 as.matrix(comparison_df)
 ```
-As we can see the `big_interaction_lm` yields the lowest error with respect to the other models. 
+
+The `big_interaction_model` is clearly the better one among them, although having the higher number of parameters.
 
 
 
@@ -890,7 +880,7 @@ diagnostic_df <- data.frame("res"= rstandard(big_interaction_lm), "fitted"= big_
 # residuals vs fitted values ---------------------------------------------------
 res_plot <- ggplot(data = diagnostic_df, aes(x=fitted, y=res))+
   geom_point(alpha = 0.5, size = 1, color = "#121214")+
-  geom_smooth(se = FALSE, color = "#3b3b9c", size=0.9)+
+  geom_smooth(se = FALSE, color = fill_color, size=0.9)+
   geom_abline(slope = 0, intercept = 0, color="red", linetype = 2, size = 0.5)+
   xlab("Fitted values")+
   ylab("Standardized residuals") +
@@ -989,7 +979,7 @@ predictions <- rt$predict(test.task)$response
 # plot example data points and predictions
 ggplot() +
   geom_point(aes(x, y), alpha = 0.7) +
-  geom_line(aes(test.data$x, predictions), color = "#3b3b9c", size = 1)
+  geom_line(aes(test.data$x, predictions), color = fill_color, size = 1)
 ```
 
 Pay attention that the although being an easy model to understand regression-tree is an *high variance* procedure: if applied repeatedly to different datasets drawn from the same data distribution, three-based methods could yield quite different results. They have a low generalization capability and tend to easily overfit the available data. By aggregating many regression-trees the predictive performances can be greatly improved.
@@ -1079,12 +1069,12 @@ rf_description_df <- data.frame(
 # depths and number of nodes histograms-----------------------------------------
 
 nodes_hist <- ggplot()+
-  geom_histogram(aes(nodes), data = rf_description_df, bins = 15, fill="#3b3b9c") +
+  geom_histogram(aes(nodes), data = rf_description_df, bins = 15, fill=fill_color) +
   xlab("number of nodes") +
   ylab("trees count") 
 
 depths_hist <- ggplot()+
-  geom_histogram(aes(depths), data = rf_description_df, bins = 15, fill="#3b3b9c") +
+  geom_histogram(aes(depths), data = rf_description_df, bins = 15, fill=fill_color) +
   xlab("tree depth") +
   ylab("trees count")
 
